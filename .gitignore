@@ -1,0 +1,12 @@
+node_modules/
+.next/
+.env*.local
+.DS_Store
+*.log
+
+# pmtiles output is large — build artifacts, not source
+data/pmtiles/
+
+# raw .laz LiDAR downloads land here during local dev
+data/lidar/
+data/raw/

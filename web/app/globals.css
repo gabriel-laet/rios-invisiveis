@@ -1,0 +1,20 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import "maplibre-gl/dist/maplibre-gl.css";
+
+html,
+body {
+  background: theme("colors.paper");
+  color: theme("colors.ink");
+}
+
+body {
+  margin: 0;
+  -webkit-font-smoothing: antialiased;
+}
+
+.maplibregl-ctrl-attrib-inner a {
+  color: #555;
+}
