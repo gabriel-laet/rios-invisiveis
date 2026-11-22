@@ -129,9 +129,9 @@ export function buildStyle(base: BaseMapId = "light"): StyleSpecification {
         source: "flood100",
         layout: { visibility: "none" },
         paint: {
-          "fill-color": "#3b82f6",
-          "fill-opacity": 0.22,
-          "fill-outline-color": "#1e40af",
+          "fill-color": "#2563eb",
+          "fill-opacity": ["interpolate", ["linear"], ["zoom"], 10, 0.5, 15, 0.35],
+          "fill-outline-color": "#1e3a8a",
         },
       },
 
@@ -141,9 +141,9 @@ export function buildStyle(base: BaseMapId = "light"): StyleSpecification {
         source: "basins",
         layout: { visibility: "none" },
         paint: {
-          "line-color": "#8b6f47",
-          "line-width": 0.6,
-          "line-opacity": 0.5,
+          "line-color": "#6b4f2a",
+          "line-width": ["interpolate", ["linear"], ["zoom"], 10, 1.2, 15, 2.2],
+          "line-opacity": 0.85,
           "line-dasharray": [3, 2],
         },
       },

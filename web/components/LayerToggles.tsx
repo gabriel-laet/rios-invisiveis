@@ -81,10 +81,10 @@ function Toggle({
   return (
     <label className="flex cursor-pointer items-center justify-between py-1.5 text-xs">
       <span>{label}</span>
+      {/* Visual only: the wrapping <label> forwards clicks to the checkbox below.
+          A click handler here as well would toggle twice (on, then straight off). */}
       <span
-        role="switch"
-        aria-checked={checked}
-        onClick={() => onChange(!checked)}
+        aria-hidden
         className={`relative inline-flex h-4 w-7 flex-shrink-0 rounded-full transition ${
           checked ? "bg-river-buried" : "bg-black/20"
         }`}
@@ -97,6 +97,7 @@ function Toggle({
       </span>
       <input
         type="checkbox"
+        role="switch"
         className="sr-only"
         checked={checked}
         onChange={(e) => onChange(e.target.checked)}
