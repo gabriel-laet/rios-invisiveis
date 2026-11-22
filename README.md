@@ -17,9 +17,15 @@ colour coding.
 ```
 cd web
 pnpm install
+cp .env.example .env.local   # optional: add NEXT_PUBLIC_CARTO_KEY
 pnpm dev
 # -> http://localhost:3000
 ```
+
+The "Claro"/"Escuro" basemaps use CARTO, which now requires a free key
+(request one by email at https://carto.com/basemaps/apikey — 5M req/mo
+non-commercial, 1M commercial, no card). Without `NEXT_PUBLIC_CARTO_KEY`
+they fall back to plain OSM tiles.
 
 The app ships with ~12 MB of seed GeoJSON already in `web/public/data/`.
 That's enough to see the central-SP rivers immediately. No keys, no infra.
@@ -61,6 +67,7 @@ The current setup loads GeoJSON directly for simplicity. For production:
 3. Point the app at them via env:
 
    ```
+   NEXT_PUBLIC_CARTO_KEY=your-carto-key
    NEXT_PUBLIC_RIVERS_PMTILES=https://cdn.example.com/rivers.pmtiles
    NEXT_PUBLIC_WATER_PMTILES=https://cdn.example.com/water.pmtiles
    NEXT_PUBLIC_FLOOD100_PMTILES=https://cdn.example.com/flood100.pmtiles

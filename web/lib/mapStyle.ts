@@ -7,17 +7,18 @@ const OSM_TILES = [
   "https://c.tile.openstreetmap.org/{z}/{x}/{y}.png",
 ];
 
-const CARTO_LIGHT = [
-  "https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
-  "https://b.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
-  "https://c.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
-];
+// CARTO raster basemaps now require a (free) key: https://carto.com/basemaps/apikey
+// Free tier: 5M req/mo non-commercial, 1M commercial. Attribution "© OpenStreetMap contributors, © CARTO".
+export const CARTO_KEY = process.env.NEXT_PUBLIC_CARTO_KEY || "";
 
-const CARTO_DARK = [
-  "https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
-  "https://b.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
-  "https://c.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
-];
+const cartoTiles = (style: "light_all" | "dark_all") =>
+  CARTO_KEY
+    ? [`https://basemaps.cartocdn.com/rastertiles/${style}/{z}/{x}/{y}.png?key=${CARTO_KEY}`]
+    : // Without a key CARTO serves "API KEY REQUIRED" watermark tiles — fall back to OSM.
+      OSM_TILES;
+
+const CARTO_LIGHT = cartoTiles("light_all");
+const CARTO_DARK = cartoTiles("dark_all");
 
 // AWS Open Data Terrain Tiles (Terrarium encoding), no API key needed
 const TERRARIUM = "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png";
@@ -58,7 +59,9 @@ export function buildStyle(base: BaseMapId = "light"): StyleSpecification {
         attribution:
           base === "satellite"
             ? "Esri, Maxar, Earthstar Geographics"
-            : "© OpenStreetMap · © CARTO",
+            : base === "osm" || !CARTO_KEY
+              ? "© OpenStreetMap contributors"
+              : "© OpenStreetMap contributors · © CARTO",
         maxzoom: 19,
       },
       terrarium: {
