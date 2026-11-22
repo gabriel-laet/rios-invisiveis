@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import maplibregl, { Map as MLMap, type MapMouseEvent } from "maplibre-gl";
-import { buildStyle, type BaseMapId } from "@/lib/mapStyle";
+import { basemapSource, buildStyle, type BaseMapId } from "@/lib/mapStyle";
 import { BURIAL_LABEL_PT, CHAPTERS, SP_CENTER, burialOf } from "@/lib/rivers";
 import Legend from "./Legend";
 import LayerToggles, { type LayerState } from "./LayerToggles";
@@ -33,6 +33,7 @@ export default function MapView() {
   const [layers, setLayers] = useState<LayerState>(DEFAULT_LAYERS);
   const [hover, setHover] = useState<HoverInfo | null>(null);
   const [activeChapter, setActiveChapter] = useState<string>("intro");
+  const baseRef = useRef<BaseMapId>(DEFAULT_LAYERS.base);
 
   const initialStyle = useMemo(() => buildStyle(DEFAULT_LAYERS.base), []);
 
@@ -96,15 +97,15 @@ export default function MapView() {
     const map = mapRef.current;
     if (!map || !ready) return;
 
-    // basemap swap via setTiles — replace source tiles
-    const style = map.getStyle();
-    const basemapSource = style.sources?.basemap;
-    if (basemapSource && basemapSource.type === "raster") {
-      // recreate the map style when base changes for simplicity
-      const newStyle = buildStyle(layers.base);
-      map.setStyle(newStyle, { diff: false });
-      map.once("styledata", () => applyToggleVisibility(map, layers));
-      return;
+    // Only swap the basemap when it actually changed. Replacing just the raster
+    // source keeps the GeoJSON sources (and their ~10 MB of data) in place.
+    if (baseRef.current !== layers.base) {
+      baseRef.current = layers.base;
+      const beforeId = map.getStyle().layers[1]?.id;
+      map.removeLayer("basemap");
+      map.removeSource("basemap");
+      map.addSource("basemap", basemapSource(layers.base));
+      map.addLayer({ id: "basemap", type: "raster", source: "basemap" }, beforeId);
     }
     applyToggleVisibility(map, layers);
   }, [layers, ready]);

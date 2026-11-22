@@ -1,4 +1,4 @@
-import type { StyleSpecification } from "maplibre-gl";
+import type { RasterSourceSpecification, StyleSpecification } from "maplibre-gl";
 import { BURIAL_COLOR } from "./rivers";
 
 const OSM_TILES = [
@@ -47,23 +47,27 @@ export function baseMapTiles(id: BaseMapId): string[] {
   }
 }
 
+export function basemapSource(base: BaseMapId): RasterSourceSpecification {
+  return {
+    type: "raster",
+    tiles: baseMapTiles(base),
+    tileSize: 256,
+    attribution:
+      base === "satellite"
+        ? "Esri, Maxar, Earthstar Geographics"
+        : base === "osm" || !CARTO_KEY
+          ? "© OpenStreetMap contributors"
+          : "© OpenStreetMap contributors · © CARTO",
+    maxzoom: 19,
+  };
+}
+
 export function buildStyle(base: BaseMapId = "light"): StyleSpecification {
   return {
     version: 8,
     glyphs: "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",
     sources: {
-      basemap: {
-        type: "raster",
-        tiles: baseMapTiles(base),
-        tileSize: 256,
-        attribution:
-          base === "satellite"
-            ? "Esri, Maxar, Earthstar Geographics"
-            : base === "osm" || !CARTO_KEY
-              ? "© OpenStreetMap contributors"
-              : "© OpenStreetMap contributors · © CARTO",
-        maxzoom: 19,
-      },
+      basemap: basemapSource(base),
       terrarium: {
         type: "raster-dem",
         tiles: [TERRARIUM],
