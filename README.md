@@ -80,8 +80,6 @@ The current setup loads GeoJSON directly for simplicity. For production:
 5. (Optional) Run the ETL in Vercel Sandbox, a Hetzner VPS, or GitHub Actions
    on a cron.
 
-See `../ARCHITECTURE.md` and the prior conversation for hosting cost
-comparisons.
 
 ## Data sources
 
