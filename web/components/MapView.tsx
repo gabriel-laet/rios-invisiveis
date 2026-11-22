@@ -82,6 +82,7 @@ export default function MapView() {
       });
     };
 
+    map.on("zoomend", () => updateTerrainExaggeration(map));
     map.on("mousemove", onMove);
     map.on("mouseleave", () => setHover(null));
 
@@ -169,6 +170,37 @@ export default function MapView() {
   );
 }
 
+// The ~30 m Terrarium DEM looks spiky when exaggerated at street-level zooms,
+// but São Paulo's relief is too subtle to read at city zoom without some
+// boost. MapLibre's terrain.exaggeration can't be a zoom expression, so it is
+// recomputed on zoomend: 1.3 at z≤11 → 1.0 at z13 → 0.8 at z≥15.
+const EXAGGERATION_STOPS: Array<[number, number]> = [
+  [11, 1.3],
+  [13, 1.0],
+  [15, 0.8],
+];
+
+function terrainExaggeration(zoom: number): number {
+  const stops = EXAGGERATION_STOPS;
+  if (zoom <= stops[0][0]) return stops[0][1];
+  for (let i = 1; i < stops.length; i++) {
+    const [z1, e1] = stops[i];
+    if (zoom <= z1) {
+      const [z0, e0] = stops[i - 1];
+      return e0 + ((zoom - z0) / (z1 - z0)) * (e1 - e0);
+    }
+  }
+  return stops[stops.length - 1][1];
+}
+
+function updateTerrainExaggeration(map: MLMap) {
+  const terrain = map.getTerrain();
+  if (!terrain) return;
+  const next = Math.round(terrainExaggeration(map.getZoom()) * 20) / 20; // 0.05 steps
+  if (Math.abs((terrain.exaggeration ?? 1) - next) < 0.01) return;
+  map.setTerrain({ ...terrain, exaggeration: next });
+}
+
 function applyToggleVisibility(map: MLMap, layers: LayerState) {
   const setVis = (id: string, v: boolean) => {
     if (!map.getLayer(id)) return;
@@ -181,7 +213,8 @@ function applyToggleVisibility(map: MLMap, layers: LayerState) {
 
   if (layers.terrain3D) {
     try {
-      map.setTerrain({ source: "terrarium", exaggeration: 1.6 });
+      if (map.getTerrain()) updateTerrainExaggeration(map);
+      else map.setTerrain({ source: "terrarium", exaggeration: terrainExaggeration(map.getZoom()) });
     } catch {
       // ignore
     }
