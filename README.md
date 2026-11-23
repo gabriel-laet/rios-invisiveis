@@ -1,113 +1,106 @@
 # Rios Invisíveis · São Paulo
 
-Interactive map of São Paulo's buried rivers — overlaid on the current street
-grid, with 3D relief, historical swipe (SARA Brasil 1930), and scrollytelling
-through four of the city's lost waterways (Anhangabaú, Tamanduateí, Pinheiros,
-Tietê).
+São Paulo has about 5,000 km of mapped rivers and streams; 1,363 km of them
+run buried under the city. This is a scrollytelling map of that water — the
+city switched off, only its rivers left, buried ones glowing amber like the
+street lamps of the avenues built on top of them.
 
-**Data is real.** The sample GeoJSON in `data/` was fetched live from
-[GeoSampa WFS](http://wfs.geosampa.prefeitura.sp.gov.br/) over a bbox that
-covers the historic centre plus the Pinheiros/Tietê corridors (~15 × 15 km).
-Every river line has a `nm_tipo_curso_hidrografia` attribute that classifies
-it as natural / open channel / **buried gallery** — that's what drives the
-colour coding.
+- **Story mode** — 15 beats from 1554 to today. A water-meter odometer
+  (*hidrômetro*) and a river-gauge ruler (*régua*) make time explicit: rivers
+  you meet turn from blue to "under works" to buried as the years roll past.
+- **Explore mode** — pan/zoom the whole city, hover any stream for its name
+  and the street that runs over it, toggle relief, flood extents, basins.
+- **Rio perto de mim** — finds the buried river nearest to you (or to a point
+  you pick). Runs entirely in the browser; your location is never sent anywhere.
+
+Design and narrative: [`docs/STORY_DESIGN.md`](docs/STORY_DESIGN.md)
+("Concreto e água, à noite"). Historical dates marked *verificar* there still
+need a source before publishing — the UI shows them with a `c.` prefix.
+
+**Data is real**: GeoSampa's `drenagem` network for the whole municipality,
+clipped to the IBGE boundary. Every segment carries GeoSampa's status —
+natural, open channel, **buried gallery**, lake — and that drives the map.
 
 ## Run locally
 
 ```
 cd web
 pnpm install
-cp .env.example .env.local   # optional: add NEXT_PUBLIC_CARTO_KEY
 pnpm dev
-# -> http://localhost:3000
+# -> http://localhost:3000   (/#explorar opens straight in explore mode)
 ```
 
-The "Claro"/"Escuro" basemaps use CARTO, which now requires a free key
-(request one by email at https://carto.com/basemaps/apikey — 5M req/mo
-non-commercial, 1M commercial, no card). Without `NEXT_PUBLIC_CARTO_KEY`
-they fall back to plain OSM tiles.
+No keys needed. `web/.env.example` documents the one optional variable
+(`NEXT_PUBLIC_SARA_TILES`, for a georeferenced SARA 1930 raster).
 
-The app ships with ~12 MB of seed GeoJSON already in `web/public/data/`.
-That's enough to see the central-SP rivers immediately. No keys, no infra.
+## Acceptance test
 
-## Refresh data from GeoSampa
+`docs/STORY_DESIGN.md` §9 lists checkable "personality" criteria (only water
+on the first screen, the year visible on every beat, time moving forward,
+wheel scrolls the story not the map, "Rio perto de mim" at Av. 23 de Maio
+finds the córrego Itororó without leaking the location, mobile, reduced
+motion, keyboard…). They're automated:
+
+```
+cd web
+pnpm dev                       # in another terminal
+pnpm acceptance [outDir]       # headless, uses your installed Chrome/Chromium
+```
+
+It prints PASS/FAIL per criterion and saves a screenshot of every beat to
+`outDir` (default `acceptance-out/`). Set `CHROME_PATH` / `BASE_URL` to override.
+
+## Refresh data
 
 ```
 bash etl/fetch-geosampa.sh
-# or with a custom bbox (EPSG:4326):
-bash etl/fetch-geosampa.sh "-46.78,-23.62,-46.58,-23.48,EPSG:4326"
 ```
 
-Files land in `data/` and are copied to `web/public/data/` so the dev server
-picks them up on next reload.
-
-## What you can do in the app
-
-- **2D rivers overlay** styled by burial status:
-  - blue solid = natural
-  - pale blue = open channel
-  - dashed pink = buried underground (the invisible ones)
-- **3D terrain toggle** — uses public AWS Terrarium tiles (~30 m), no key
-- **Hillshade** — same source, for relief readability
-- **Flood 100-yr** — GeoSampa `mancha_inundacao_100` polygons
-- **Basin outlines** — `bacia_hidrografica`
-- **Historical swipe** — wire up `NEXT_PUBLIC_SARA_TILES` with a URL template
-  for SARA 1930 raster tiles (see `etl/build-dem-tiles.md` for the notes on
-  how to georeference and tile the 1930 mosaic from GeoSampa)
-- **Scrollytelling** — the left panel flies the camera through 4 chapters
-
-## Going to production (phase 2)
-
-The current setup loads GeoJSON directly for simplicity. For production:
-
-1. Run `etl/build-pmtiles.sh` to produce `rivers.pmtiles`, `water.pmtiles`,
-   etc. (requires `tippecanoe`).
-2. Upload to an S3-compatible bucket (Cloudflare R2, DO Spaces, Hetzner
-   Object Storage).
-3. Point the app at them via env:
-
-   ```
-   NEXT_PUBLIC_CARTO_KEY=your-carto-key
-   NEXT_PUBLIC_RIVERS_PMTILES=https://cdn.example.com/rivers.pmtiles
-   NEXT_PUBLIC_WATER_PMTILES=https://cdn.example.com/water.pmtiles
-   NEXT_PUBLIC_FLOOD100_PMTILES=https://cdn.example.com/flood100.pmtiles
-   NEXT_PUBLIC_BASINS_PMTILES=https://cdn.example.com/basins.pmtiles
-   NEXT_PUBLIC_SARA_TILES=https://cdn.example.com/sara1930/{z}/{x}/{y}.png
-   NEXT_PUBLIC_DEM_TILES=https://cdn.example.com/sp-dem/{z}/{x}/{y}.webp
-   ```
-
-4. Deploy the Next.js app to Vercel / Cloudflare Pages / Netlify.
-5. (Optional) Run the ETL in Vercel Sandbox, a Hetzner VPS, or GitHub Actions
-   on a cron.
-
+Pages through GeoSampa's WFS (30,000 features per response), dissolves the
+flood cells, fetches the IBGE municipality boundary, clips the city-wide river
+network to it (`build-city-rivers.py`) and regenerates the numbers the story
+quotes (`web/lib/generated/stats.json`). Needs `shapely`, or `uv` to fetch it.
+Outputs land in `data/`; the files the app loads are copied to `web/public/data/`.
 
 ## Data sources
 
-- **GeoSampa** (Prefeitura de São Paulo) — WFS/WMS at
-  `wfs.geosampa.prefeitura.sp.gov.br`. Main layer used: `geoportal:drenagem`
-  with the `nm_tipo_curso_hidrografia` attribute.
-- **AWS Terrain Tiles** (Mazpen/Terrarium) — public DEM.
-- **OpenStreetMap** and **CARTO basemaps** — current street grid.
-- **SARA Brasil 1930** mapping — georeferenced 1:5000 topographic survey,
-  available on GeoSampa as a download. Requires separate tiling (see
-  `etl/build-dem-tiles.md` for the LiDAR variant of the same workflow).
+- **GeoSampa** (Prefeitura de São Paulo) — WFS at
+  `wfs.geosampa.prefeitura.sp.gov.br`: `drenagem` (rivers, with
+  `nm_tipo_curso_hidrografia`), `massa_d_agua`, `mancha_inundacao_100`,
+  `bacia_hidrografica`.
+- **IBGE** — municipality boundary (malhas API, code 3550308).
+- **AWS Terrain Tiles** (Terrarium) — relief and 3D terrain.
+- **OpenFreeMap** — faint street hints (one story beat, and the "Ruas" base).
+- **Esri World Imagery** — the "Satélite" base.
 
 ## Project layout
 
 ```
-rios/
-├── README.md                 ← you are here
-├── data/                     ← raw and slimmed GeoJSON from GeoSampa
+riosp/
+├── data/                       raw + slimmed GeoJSON from GeoSampa / IBGE
+├── docs/STORY_DESIGN.md        design & narrative spec
 ├── etl/
-│   ├── fetch-geosampa.sh     ← WFS download + slim
-│   ├── slim-geojson.py       ← coord-rounding + prop filtering
-│   ├── build-pmtiles.sh      ← tippecanoe → PMTiles (phase 2)
-│   └── build-dem-tiles.md    ← notes on LiDAR → Terrain-RGB pipeline
-└── web/                      ← Next.js 15 + MapLibre + deck.gl + PMTiles
-    ├── app/
+│   ├── fetch-geosampa.sh       paged WFS download, slim, clip, stats
+│   ├── merge-geojson.py        merges WFS pages
+│   ├── slim-geojson.py         coord rounding, prop filter, --dissolve
+│   ├── build-city-rivers.py    clip to the city, compact props, stats.json
+│   ├── build-pmtiles.sh        tippecanoe → PMTiles (later)
+│   └── build-dem-tiles.md      notes on LiDAR → Terrain-RGB
+└── web/                        Next.js 15 + MapLibre GL 5
+    ├── app/                    page, fonts, global styles
     ├── components/
+    │   ├── StoryScroller.tsx   the 15 beats, scroll → step/progress/year
+    │   ├── MapView.tsx         map, camera per beat, explore mode, hover
+    │   ├── Hidrometro.tsx      odometer + régua
+    │   ├── StoryCallouts.tsx   DOM labels per beat
+    │   ├── PertoDeMim.tsx      "Rio perto de mim"
+    │   └── ExploreBar / LayerToggles / Legend
     ├── lib/
-    │   ├── mapStyle.ts       ← MapLibre style spec (sources, layers, colors)
-    │   └── rivers.ts         ← types, color map, chapter definitions
-    └── public/data/          ← runtime copies of the slimmed GeoJSON
+    │   ├── story.ts            beats (copy, camera, layers, years)
+    │   ├── timeline.ts         curated dates, certainty, name formatting
+    │   ├── mapStyle.ts         layer stack + network/state filters
+    │   ├── nearest.ts          nearest-river search, point-in-city
+    │   └── generated/stats.json  numbers from the ETL
+    ├── scripts/acceptance.mjs  §9 acceptance test
+    └── public/data/            GeoJSON the app loads
 ```
