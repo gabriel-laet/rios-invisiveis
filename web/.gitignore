@@ -1,2 +1,5 @@
 tsconfig.tsbuildinfo
 acceptance-out/
+.next-export/
+dist/
+.wrangler/

@@ -8,7 +8,9 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "acceptance": "node scripts/acceptance.mjs"
+    "acceptance": "node scripts/acceptance.mjs",
+    "build:cf": "bash scripts/build-cloudflare.sh",
+    "deploy:cf": "bash scripts/build-cloudflare.sh && wrangler deploy"
   },
   "dependencies": {
     "@deck.gl/core": "^9.1.0",
@@ -28,6 +30,7 @@
     "playwright-core": "^1.65.1",
     "postcss": "8.5.1",
     "tailwindcss": "3.4.17",
-    "typescript": "5.7.3"
+    "typescript": "5.7.3",
+    "wrangler": "^4.166.0"
   }
 }

@@ -67,10 +67,13 @@ export default function MapView() {
       setMap(map);
       setReady(true);
       setStory({ mapReady: true });
+      // Only after "load": the animation restyles every tick, and a style that
+      // keeps changing never counts as loaded, so "load" would never fire.
+      stopFlow = startRiverAnimation(map);
     });
 
     map.on("zoomend", () => updateTerrainExaggeration(map));
-    const stopFlow = startRiverAnimation(map);
+    let stopFlow = () => {};
 
     const hoverLayers = ["net-vivo", "net-canal", "net-enterrado"];
     const onMove = (e: MapMouseEvent) => {

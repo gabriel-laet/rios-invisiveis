@@ -1,0 +1,17 @@
+// Rios Invisíveis on Cloudflare: a static-assets Worker on a path route of
+// gabriel-laet.com. The personal site's Worker owns the domain (custom domain);
+// this more specific route takes precedence for /p/rios-invisiveis*.
+// Deploy: pnpm deploy:cf
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "rios-invisiveis",
+  "compatibility_date": "2026-11-01",
+  "assets": {
+    "directory": "./dist",
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "none"
+  },
+  "routes": [{ "pattern": "gabriel-laet.com/p/rios-invisiveis*", "zone_name": "gabriel-laet.com" }],
+  "workers_dev": false,
+  "preview_urls": false
+}

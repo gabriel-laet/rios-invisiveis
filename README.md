@@ -37,16 +37,23 @@ pnpm dev
 No keys needed. `web/.env.example` documents the one optional variable
 (`NEXT_PUBLIC_SARA_TILES`, for a georeferenced SARA 1930 raster).
 
-## Deploy under a sub-path
+## Deploy
 
-To serve it at e.g. `gabriel-laet.com/p/rios-invisiveis`, set the base path
-both when building and when running `next start`:
+Live at **https://gabriel-laet.com/p/rios-invisiveis/** — a static export
+served by a Cloudflare Worker (static assets) named `rios-invisiveis`, on the
+route `gabriel-laet.com/p/rios-invisiveis*`. The rest of the domain belongs to
+the personal site's Worker ([gabriel-laet/gabriel-laet.com](https://github.com/gabriel-laet/gabriel-laet.com));
+the more specific route wins.
 
 ```
 cd web
-NEXT_PUBLIC_BASE_PATH=/p/rios-invisiveis pnpm build
-NEXT_PUBLIC_BASE_PATH=/p/rios-invisiveis pnpm start
+pnpm deploy:cf      # static export under /p/rios-invisiveis + wrangler deploy
 ```
+
+`scripts/build-cloudflare.sh` builds with `STATIC_EXPORT=1` (into `.next-export`,
+so a running `pnpm dev` is untouched) and lays the files out at
+`dist/p/rios-invisiveis/`. `NEXT_PUBLIC_BASE_PATH` overrides the sub-path; for a
+Node server instead, set it for both `pnpm build` and `pnpm start`.
 
 ## Acceptance test
 

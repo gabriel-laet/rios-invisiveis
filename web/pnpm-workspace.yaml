@@ -1,3 +1,6 @@
 allowBuilds:
   # Next's optional image optimizer; the app doesn't use next/image.
   sharp: false
+  # Wrangler's bundler and local runtime: not needed to deploy a static-assets Worker.
+  esbuild: false
+  workerd: false
