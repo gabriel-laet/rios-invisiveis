@@ -36,9 +36,10 @@ async function open(viewport, extra = {}) {
   const ctx = await browser.newContext({ viewport, locale: "pt-BR", ...extra });
   const page = await ctx.newPage();
   const errors = [];
-  page.on("pageerror", (e) => errors.push(String(e)));
+  page.on("pageerror", (e) => { errors.push(String(e)); if (process.env.ACC_DEBUG) console.log("ERR", e.stack); });
   await page.goto(BASE + (extra.path ?? "/"), { waitUntil: "domcontentloaded" });
-  await page.waitForFunction(() => window.__riosMap && window.__riosMap.isStyleLoaded(), null, { timeout: 90_000 });
+  // Not isStyleLoaded(): the river animation restyles every tick, so the style is never "settled".
+  await page.waitForFunction(() => { const m = window.__riosMap; return !!(m && m.getSource("rios") && m.isSourceLoaded("rios")); }, null, { timeout: 90_000 });
   await page.waitForTimeout(1500);
   return { ctx, page, errors };
 }

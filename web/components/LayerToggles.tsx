@@ -15,6 +15,7 @@ export type LayerState = {
 const BASES: Array<{ id: BaseMapId; label: string }> = [
   { id: "agua", label: "Só água" },
   { id: "ruas", label: "Ruas" },
+  { id: "cinza", label: "Cinza" },
   { id: "satelite", label: "Satélite" },
 ];
 
@@ -31,7 +32,7 @@ export default function LayerToggles({
   const set = <K extends keyof LayerState>(k: K, v: LayerState[K]) => onChange({ ...state, [k]: v });
 
   return (
-    <div className="panel pointer-events-auto absolute right-4 top-20 z-30 w-64 md:top-4">
+    <div className="panel pointer-events-auto absolute right-4 top-20 z-30 w-72 md:top-4">
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}

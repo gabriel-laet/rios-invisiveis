@@ -1,6 +1,7 @@
 "use client";
 
 import type { Map as MLMap } from "maplibre-gl";
+import { dataUrl } from "./paths";
 
 // One map per page; components that decorate it (callouts, "perto") grab it here.
 let current: MLMap | null = null;
@@ -27,12 +28,12 @@ let rivers: Promise<GeoJSON.FeatureCollection> | null = null;
 let city: Promise<GeoJSON.FeatureCollection> | null = null;
 
 export function loadRivers() {
-  rivers ??= fetch("/data/rios_sp.geojson").then((r) => r.json());
+  rivers ??= fetch(dataUrl("rios_sp.geojson")).then((r) => r.json());
   return rivers;
 }
 
 export function loadCity() {
-  city ??= fetch("/data/limite_sp.geojson").then((r) => r.json());
+  city ??= fetch(dataUrl("limite_sp.geojson")).then((r) => r.json());
   return city;
 }
 

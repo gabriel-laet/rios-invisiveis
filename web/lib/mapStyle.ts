@@ -9,10 +9,11 @@ import type {
   StyleSpecification,
 } from "maplibre-gl";
 import { P } from "./palette";
+import { dataUrl } from "./paths";
 import { CURATED_NAMES, curatedStates } from "./timeline";
 import type { Network } from "./story";
 
-export type BaseMapId = "agua" | "ruas" | "satelite";
+export type BaseMapId = "agua" | "ruas" | "cinza" | "satelite";
 
 const TERRARIUM = "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png";
 const SATELLITE = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
@@ -32,6 +33,7 @@ const W = {
   vivo: [[9, 0.6], [12, 1.2], [15, 2.5], [17, 5]] as Stops,
   enterradoGlow: [[9, 2], [12, 5], [15, 12], [17, 22]] as Stops,
   enterrado: [[9, 0.5], [12, 1], [15, 2], [17, 3.5]] as Stops,
+  flow: [[9, 0.9], [12, 1.6], [15, 3], [17, 5]] as Stops,
 };
 
 /** Base opacities; the network code scales these (focus dimming, the "regra" fade). */
@@ -43,8 +45,17 @@ const BASE_OPACITY: Record<string, number> = {
   "net-vivo": 1,
   "net-enterrado-glow": 0.22,
   "net-enterrado": 0.95,
+  "net-flow": 0.9,
 };
-const ATUAL_LAYERS = ["net-canal-casing", "net-canal", "net-vivo-glow", "net-vivo", "net-enterrado-glow", "net-enterrado"];
+const ATUAL_LAYERS = [
+  "net-canal-casing",
+  "net-canal",
+  "net-vivo-glow",
+  "net-vivo",
+  "net-flow",
+  "net-enterrado-glow",
+  "net-enterrado",
+];
 const CURATED_LAYERS = ["cur-vivo", "cur-obra", "cur-final-canal", "cur-final-vivo", "cur-final-enterrado"];
 
 type E = ExpressionSpecification;
@@ -75,6 +86,25 @@ export function buildStyle(): StyleSpecification {
         "hillshade-highlight-color": "rgba(236,232,225,0.07)",
         "hillshade-accent-color": P.asfalto,
         "hillshade-exaggeration": 0.3,
+      },
+    },
+    // Survey grid: 0.05° lines always, 0.01° lines once you zoom in.
+    {
+      id: "graticule",
+      type: "line",
+      source: "graticule",
+      paint: {
+        "line-color": P.garoa,
+        "line-width": ["case", ["get", "major"], 0.8, 0.5],
+        "line-opacity": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          10,
+          ["case", ["get", "major"], 0.05, 0],
+          13,
+          ["case", ["get", "major"], 0.09, 0.04],
+        ],
       },
     },
     {
@@ -159,6 +189,24 @@ export function buildStyle(): StyleSpecification {
         "line-color": ["case", ["==", ["get", "t"], "l"], P.lago, P.rio],
         "line-width": byZoom(W.vivo),
         "line-opacity": 1,
+        "line-opacity-transition": fade,
+      },
+    },
+    // Particles drifting along open water (animated in riverAnimation.ts).
+    {
+      id: "net-flow",
+      type: "line",
+      source: "rios",
+      filter: T(["n", "o"]),
+      minzoom: 10,
+      // Butt caps on purpose: each round-cap dash pattern costs ~15 rows of
+      // MapLibre's line atlas, and the animation needs one pattern per frame.
+      layout: { "line-cap": "butt" },
+      paint: {
+        "line-color": "#DDF4FF",
+        "line-width": byZoom(W.flow),
+        "line-dasharray": [1.2, 7],
+        "line-opacity": 0.75,
         "line-opacity-transition": fade,
       },
     },
@@ -257,6 +305,15 @@ export function buildStyle(): StyleSpecification {
       },
     },
 
+    {
+      id: "foco-flow",
+      type: "line",
+      source: "rios",
+      filter: NONE,
+      layout: { "line-cap": "butt" },
+      paint: { "line-color": "#FFF6E0", "line-width": byZoom(W.vivo, 2), "line-dasharray": [1, 5], "line-opacity": 0.9 },
+    },
+
     { id: "mask", type: "fill", source: "mask", paint: { "fill-color": P.breu, "fill-opacity": 0.92 } },
     {
       id: "outline-glow",
@@ -318,19 +375,20 @@ export function buildStyle(): StyleSpecification {
         attribution: "Relevo: AWS Terrain Tiles",
       },
       hillshade: { type: "raster-dem", tiles: [TERRARIUM], tileSize: 256, encoding: "terrarium", maxzoom: 15 },
-      limite: { type: "geojson", data: "/data/limite_sp.geojson", attribution: "Limite: IBGE" },
+      limite: { type: "geojson", data: dataUrl("limite_sp.geojson"), attribution: "Limite: IBGE" },
       rios: {
         type: "geojson",
-        data: "/data/rios_sp.geojson",
+        data: dataUrl("rios_sp.geojson"),
         generateId: true,
         tolerance: 0.6,
         buffer: 64,
         attribution: "Rios: GeoSampa (Prefeitura de São Paulo)",
       },
-      water: { type: "geojson", data: "/data/massa_d_agua.geojson" },
-      flood100: { type: "geojson", data: "/data/mancha_inundacao_100.geojson" },
-      basins: { type: "geojson", data: "/data/bacia_hidrografica.geojson" },
+      water: { type: "geojson", data: dataUrl("massa_d_agua.geojson") },
+      flood100: { type: "geojson", data: dataUrl("mancha_inundacao_100.geojson") },
+      basins: { type: "geojson", data: dataUrl("bacia_hidrografica.geojson") },
       mask: { type: "geojson", data: empty },
+      graticule: { type: "geojson", data: graticule() },
       perto: { type: "geojson", data: empty },
       ...(SARA_TILES
         ? { sara1930: { type: "raster" as const, tiles: [SARA_TILES], tileSize: 256, attribution: "SARA Brasil 1930 · GeoSampa" } }
@@ -338,6 +396,26 @@ export function buildStyle(): StyleSpecification {
     },
     layers,
   };
+}
+
+/** Survey grid over the municipality's bbox (lines every 0.01°, every 5th "major"). */
+function graticule(): GeoJSON.FeatureCollection {
+  const [w, s, e, n] = [-47.0, -24.05, -46.3, -23.35];
+  const features: GeoJSON.Feature[] = [];
+  const line = (coords: GeoJSON.Position[], major: boolean): GeoJSON.Feature => ({
+    type: "Feature",
+    properties: { major },
+    geometry: { type: "LineString", coordinates: coords },
+  });
+  for (let i = 0; i <= Math.round((e - w) / 0.01); i++) {
+    const x = +(w + i * 0.01).toFixed(2);
+    features.push(line([[x, s], [x, n]], i % 5 === 0));
+  }
+  for (let i = 0; i <= Math.round((n - s) / 0.01); i++) {
+    const y = +(s + i * 0.01).toFixed(2);
+    features.push(line([[w, y], [e, y]], i % 5 === 0));
+  }
+  return { type: "FeatureCollection", features };
 }
 
 /** World polygon with the city cut out. */
@@ -384,6 +462,7 @@ export function applyNetwork(map: MLMap, s: NetworkState) {
   map.setFilter("foco-glow", F(focus.length ? NM_IN(focus) : NONE));
   // In past-tense beats the curated layers already draw the focus rivers in their year's state.
   map.setFilter("foco", F(focus.length && s.network !== "passado" ? NM_IN(focus) : NONE));
+  map.setFilter("foco-flow", F(focus.length ? NM_IN(focus) : NONE));
 
   // Present-tense layers
   const atualK = s.network === "atual" ? 1 : s.network === "regra" ? s.progress : 0;
@@ -422,8 +501,20 @@ export function setLayerVisible(map: MLMap, id: string, on: boolean) {
   vis(map, id, on);
 }
 
+/**
+ * "cinza" is the satellite photo fully desaturated:
+ * the city in grayscale, so only the water carries colour.
+ */
 export function applyBase(map: MLMap, base: BaseMapId) {
-  vis(map, "basemap", base === "satelite");
-  vis(map, "land", base !== "satelite");
+  const photo = base === "satelite" || base === "cinza";
+  vis(map, "basemap", photo);
+  vis(map, "land", !photo);
   vis(map, "streets", base === "ruas");
+  if (map.getLayer("basemap")) {
+    const gray = base === "cinza";
+    map.setPaintProperty("basemap", "raster-saturation", gray ? -1 : -0.8);
+    map.setPaintProperty("basemap", "raster-contrast", gray ? 0.25 : 0);
+    map.setPaintProperty("basemap", "raster-brightness-max", gray ? 0.62 : 0.55);
+    map.setPaintProperty("basemap", "raster-opacity", gray ? 0.85 : 0.6);
+  }
 }

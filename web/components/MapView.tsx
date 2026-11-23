@@ -10,6 +10,8 @@ import { bboxOf, loadCity, setMap } from "@/lib/mapHandle";
 import LayerToggles, { type LayerState } from "./LayerToggles";
 import Legend from "./Legend";
 import HistoricalSwipe from "./HistoricalSwipe";
+import Hud from "./Hud";
+import { startRiverAnimation } from "@/lib/riverAnimation";
 
 const STATUS: Record<string, string> = {
   n: "A céu aberto",
@@ -68,6 +70,7 @@ export default function MapView() {
     });
 
     map.on("zoomend", () => updateTerrainExaggeration(map));
+    const stopFlow = startRiverAnimation(map);
 
     const hoverLayers = ["net-vivo", "net-canal", "net-enterrado"];
     const onMove = (e: MapMouseEvent) => {
@@ -94,6 +97,7 @@ export default function MapView() {
     map.on("mouseleave", () => setHover(null));
 
     return () => {
+      stopFlow();
       setMap(null);
       map.remove();
       mapRef.current = null;
@@ -180,6 +184,7 @@ export default function MapView() {
     // In the story the map is decoration: not focusable, not clickable, hidden from AT.
     <div className={`fixed inset-0 ${mode === "explore" ? "" : "pointer-events-none"}`} inert={mode !== "explore"}>
       <div ref={containerRef} className="absolute inset-0" />
+      {ready && <Hud map={mapRef.current!} />}
       {mode === "explore" && (
         <>
           {layers.historical && ready && <HistoricalSwipe mapRef={mapRef} enabled />}

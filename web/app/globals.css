@@ -133,3 +133,11 @@ body.explore {
     transition: none;
   }
 }
+
+/* Instrument HUD over the map */
+.hud-corner {
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  border-color: rgb(236 232 225 / 0.28);
+}

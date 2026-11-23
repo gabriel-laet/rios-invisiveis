@@ -10,6 +10,10 @@ street lamps of the avenues built on top of them.
   you meet turn from blue to "under works" to buried as the years roll past.
 - **Explore mode** — pan/zoom the whole city, hover any stream for its name
   and the street that runs over it, toggle relief, flood extents, basins.
+  Bases: *Só água*, *Ruas*, *Cinza* (grayscale satellite, so only the water
+  has colour) and *Satélite*. Water moves: particles drift along open rivers
+  and the buried rivers' amber dashes creep along underground (off under
+  reduced motion). An instrument HUD reads out position, zoom and heading.
 - **Rio perto de mim** — finds the buried river nearest to you (or to a point
   you pick). Runs entirely in the browser; your location is never sent anywhere.
 
@@ -32,6 +36,17 @@ pnpm dev
 
 No keys needed. `web/.env.example` documents the one optional variable
 (`NEXT_PUBLIC_SARA_TILES`, for a georeferenced SARA 1930 raster).
+
+## Deploy under a sub-path
+
+To serve it at e.g. `gabriel-laet.com/p/rios-invisiveis`, set the base path
+both when building and when running `next start`:
+
+```
+cd web
+NEXT_PUBLIC_BASE_PATH=/p/rios-invisiveis pnpm build
+NEXT_PUBLIC_BASE_PATH=/p/rios-invisiveis pnpm start
+```
 
 ## Acceptance test
 
@@ -76,7 +91,7 @@ Outputs land in `data/`; the files the app loads are copied to `web/public/data/
 ## Project layout
 
 ```
-riosp/
+rios-invisiveis/
 ├── data/                       raw + slimmed GeoJSON from GeoSampa / IBGE
 ├── docs/STORY_DESIGN.md        design & narrative spec
 ├── etl/
