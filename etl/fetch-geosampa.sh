@@ -12,6 +12,9 @@
 set -euo pipefail
 
 BBOX="${1:--46.78,-23.62,-46.58,-23.48,EPSG:4326}"
+# Whole municipality (IBGE 3550308) — used for the city-wide river network.
+CITY_BBOX="-46.83,-24.01,-46.36,-23.35,EPSG:4326"
+IBGE_SP="https://servicodados.ibge.gov.br/api/v3/malhas/municipios/3550308?formato=application/vnd.geo%2Bjson&qualidade=maxima"
 WFS="http://wfs.geosampa.prefeitura.sp.gov.br/geoserver/ows"
 PAGE=30000
 ETL="$(cd "$(dirname "$0")" && pwd)"
@@ -20,19 +23,19 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$OUT"
 
-# fetch <layer> <sort-key>
+# fetch <layer> <sort-key> [bbox] [out-name]
 fetch () {
-  local layer="$1" sort="$2"
-  local out="$OUT/$layer.geojson"
-  local base="${WFS}?service=wfs&version=2.0.0&request=GetFeature&typeNames=geoportal:${layer}&bbox=${BBOX}"
+  local layer="$1" sort="$2" bbox="${3:-$BBOX}" name="${4:-$1}"
+  local out="$OUT/$name.geojson"
+  local base="${WFS}?service=wfs&version=2.0.0&request=GetFeature&typeNames=geoportal:${layer}&bbox=${bbox}"
 
   local total
   total=$(curl -s --max-time 180 "${base}&resultType=hits" | grep -o 'numberMatched="[0-9]*"' | grep -o '[0-9]*')
-  echo "-> $layer  ($total features matched)"
+  echo "-> $name  ($total features matched)"
 
   local start=0 i=0 pages=()
   while [ "$start" -lt "$total" ]; do
-    local page="$TMP/${layer}.$i.json"
+    local page="$TMP/${name}.$i.json"
     if ! curl -s --fail --retry 3 --max-time 600 \
       "${base}&outputFormat=application/json&srsName=EPSG:4326&sortBy=${sort}&count=${PAGE}&startIndex=${start}" \
       -o "$page"; then
@@ -55,6 +58,16 @@ fetch bacia_hidrografica   cd_identificador_bacia_hidrografica
 fetch mancha_inundacao_100 cd_identificador
 fetch mancha_inundacao_25  cd_identificador
 
+# Dissolving / clipping needs shapely: use it if installed, otherwise via uv.
+if python3 -c "import shapely" 2>/dev/null; then
+  PY_GEO=(python3)
+elif command -v uv >/dev/null; then
+  PY_GEO=(uv run -q --no-project --with shapely python)
+else
+  echo "The flood dissolve and city clip need shapely (pip install shapely) or uv." >&2
+  exit 1
+fi
+
 # Slim down to a reasonable size
 KEEP_RIVERS="nm_acidente,nm_tipo_curso_hidrografia,nm_tipo_trecho,tx_tipo_acidente,qt_comprimento_hidrografia,nm_via_proximo,cd_identificador"
 python3 "$ETL/slim-geojson.py" "$OUT/drenagem.geojson"           "$OUT/drenagem.geojson"           "$KEEP_RIVERS"
@@ -62,17 +75,16 @@ python3 "$ETL/slim-geojson.py" "$OUT/massa_d_agua.geojson"       "$OUT/massa_d_a
 python3 "$ETL/slim-geojson.py" "$OUT/bacia_hidrografica.geojson" "$OUT/bacia_hidrografica.geojson" "nm_bacia_hidrografica,nm_bacia_hidrografica_principal"
 # The flood layers are hundreds of thousands of small cells: dissolve them
 # into merged polygons (per basin) so the browser gets a few MB, not ~140.
-# Dissolving needs shapely: use it if installed, otherwise pull it in via uv.
-if python3 -c "import shapely" 2>/dev/null; then
-  PY_GEO=(python3)
-elif command -v uv >/dev/null; then
-  PY_GEO=(uv run -q --no-project --with shapely python)
-else
-  echo "Dissolving flood polygons needs shapely (pip install shapely) or uv." >&2
-  exit 1
-fi
 "${PY_GEO[@]}" "$ETL/slim-geojson.py" "$OUT/mancha_inundacao_100.geojson" "$OUT/mancha_inundacao_100.geojson" "nm_bacia_hidrografica" --dissolve nm_bacia_hidrografica
 "${PY_GEO[@]}" "$ETL/slim-geojson.py" "$OUT/mancha_inundacao_25.geojson"  "$OUT/mancha_inundacao_25.geojson"  "nm_bacia_hidrografica" --dissolve nm_bacia_hidrografica
+
+# City-wide river network, clipped to the municipality boundary. This feeds
+# the "only São Paulo, only rivers" view; the bbox layers above stay as-is.
+echo "-> limite_sp (IBGE)"
+curl -s --fail --retry 3 --max-time 120 "$IBGE_SP" -o "$OUT/limite_sp.geojson"
+fetch drenagem cd_identificador "$CITY_BBOX" drenagem_sp_raw
+"${PY_GEO[@]}" "$ETL/build-city-rivers.py" "$OUT/drenagem_sp_raw.geojson" "$OUT/limite_sp.geojson" "$OUT/rios_sp.geojson"
+rm -f "$OUT/drenagem_sp_raw.geojson"
 
 # Copy to /public for the dev server
 WEB_PUBLIC="$(cd "$ETL/.." && pwd)/web/public/data"
