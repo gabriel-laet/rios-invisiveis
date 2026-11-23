@@ -1,0 +1,3 @@
+allowBuilds:
+  # Next's optional image optimizer; the app doesn't use next/image.
+  sharp: false

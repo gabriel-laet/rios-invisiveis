@@ -45,6 +45,9 @@ importers:
       autoprefixer:
         specifier: 10.4.20
         version: 10.4.20(postcss@8.5.1)
+      playwright-core:
+        specifier: ^1.65.1
+        version: 1.65.1
       postcss:
         specifier: 8.5.1
         version: 8.5.1
@@ -766,6 +769,11 @@ packages:
   pirates@4.0.7:
     resolution: {integrity: sha512-TfySrs/5nm8fQJDcBDuUng3VOUKsd7S+zqvbOTiGXHfxX4wK31ard+hoNuvkicM/2YFzlpDgABOevKSsB4G/FA==}
     engines: {node: '>= 6'}
+
+  playwright-core@1.65.1:
+    resolution: {integrity: sha512-hqPpz7blSMPxWVdoeE1yiBSzXsKiVOd2k+kjCvmUywD2GPO2Dd9HfcWnq9NN0GHbNZDFgZ9JfBFr+X5/BLo0qw==}
+    engines: {node: '>=20'}
+    hasBin: true
 
   pmtiles@4.4.1:
     resolution: {integrity: sha512-5oTeQc/yX/ft1evbpIlnoCZugQuug/iYIAj/ZTqIqzdGek4uZEho99En890EE6NOSI3JTI3IG8R7r8+SltphxA==}
@@ -1659,6 +1667,8 @@ snapshots:
   pify@2.3.0: {}
 
   pirates@4.0.7: {}
+
+  playwright-core@1.65.1: {}
 
   pmtiles@4.4.1:
     dependencies:
