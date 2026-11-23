@@ -2,8 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import maplibregl, { Map as MLMap, type MapMouseEvent } from "maplibre-gl";
-import { basemapSource, buildStyle, type BaseMapId } from "@/lib/mapStyle";
-import { BURIAL_LABEL_PT, CHAPTERS, SP_CENTER, burialOf } from "@/lib/rivers";
+import { applyBaseLook, basemapSource, buildStyle, cityMask, type BaseMapId } from "@/lib/mapStyle";
+import { BURIAL_LABEL_PT, CHAPTERS, SP_CENTER, burialFromCode, type StoryMode } from "@/lib/rivers";
 import Legend from "./Legend";
 import LayerToggles, { type LayerState } from "./LayerToggles";
 import HistoricalSwipe from "./HistoricalSwipe";
@@ -13,12 +13,11 @@ type HoverInfo = {
   y: number;
   name: string;
   status: string;
-  type: string | null;
   nearStreet: string | null;
 };
 
 const DEFAULT_LAYERS: LayerState = {
-  base: "light" as BaseMapId,
+  base: "rivers" as BaseMapId,
   terrain3D: false,
   hillshade: false,
   flood100: false,
@@ -33,6 +32,7 @@ export default function MapView() {
   const [layers, setLayers] = useState<LayerState>(DEFAULT_LAYERS);
   const [hover, setHover] = useState<HoverInfo | null>(null);
   const [activeChapter, setActiveChapter] = useState<string>("intro");
+  const [mode, setMode] = useState<StoryMode>("story");
   const baseRef = useRef<BaseMapId>(DEFAULT_LAYERS.base);
 
   const initialStyle = useMemo(() => buildStyle(DEFAULT_LAYERS.base), []);
@@ -58,6 +58,13 @@ export default function MapView() {
     map.on("load", () => {
       mapRef.current = map;
       setReady(true);
+      fetch("/data/limite_sp.geojson")
+        .then((r) => r.json())
+        .then((fc: GeoJSON.FeatureCollection) => {
+          const src = map.getSource("mask") as maplibregl.GeoJSONSource | undefined;
+          src?.setData(cityMask(fc));
+        })
+        .catch(() => {});
     });
 
     const riverHoverLayers = ["rivers-natural", "rivers-channelized", "rivers-buried"];
@@ -75,10 +82,9 @@ export default function MapView() {
       setHover({
         x: e.point.x,
         y: e.point.y,
-        name: (p.nm_acidente as string) || "Córrego sem nome",
-        status: BURIAL_LABEL_PT[burialOf(p.nm_tipo_curso_hidrografia as string | null)],
-        type: (p.tx_tipo_acidente as string | null) || null,
-        nearStreet: (p.nm_via_proximo as string | null) || null,
+        name: (p.nm as string) || "Córrego sem nome",
+        status: BURIAL_LABEL_PT[burialFromCode(p.t as string | null)],
+        nearStreet: (p.via as string) || null,
       });
     };
 
@@ -101,12 +107,16 @@ export default function MapView() {
     // Only swap the basemap when it actually changed. Replacing just the raster
     // source keeps the GeoJSON sources (and their ~10 MB of data) in place.
     if (baseRef.current !== layers.base) {
+      const prev = baseRef.current;
       baseRef.current = layers.base;
-      const beforeId = map.getStyle().layers[1]?.id;
-      map.removeLayer("basemap");
-      map.removeSource("basemap");
-      map.addSource("basemap", basemapSource(layers.base));
-      map.addLayer({ id: "basemap", type: "raster", source: "basemap" }, beforeId);
+      // "rivers" just hides the raster; only swap tiles for a real basemap.
+      if (layers.base !== "rivers" && layers.base !== prev) {
+        map.removeLayer("basemap");
+        map.removeSource("basemap");
+        map.addSource("basemap", basemapSource(layers.base));
+        map.addLayer({ id: "basemap", type: "raster", source: "basemap" }, "hillshade");
+      }
+      applyBaseLook(map, layers.base);
     }
     applyToggleVisibility(map, layers);
   }, [layers, ready]);
@@ -130,6 +140,33 @@ export default function MapView() {
       setLayers((s) => ({ ...s, terrain3D: true }));
     }
   }, [activeChapter, ready]);
+
+  // Story mode: the map is a camera-driven backdrop. Explore: hand it over.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready) return;
+    const handlers = [
+      map.scrollZoom,
+      map.dragPan,
+      map.dragRotate,
+      map.boxZoom,
+      map.doubleClickZoom,
+      map.keyboard,
+      map.touchZoomRotate,
+      map.touchPitch,
+    ];
+    handlers.forEach((h) => (mode === "explore" ? h.enable() : h.disable()));
+    if (mode === "story") setHover(null);
+  }, [mode, ready]);
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const m = (e as CustomEvent<{ mode: StoryMode }>).detail?.mode;
+      if (m) setMode(m);
+    };
+    window.addEventListener("rios:mode", handler as EventListener);
+    return () => window.removeEventListener("rios:mode", handler as EventListener);
+  }, []);
 
   // Watch scroll position to sync chapter
   useEffect(() => {
@@ -156,11 +193,6 @@ export default function MapView() {
         >
           <div className="font-serif text-base leading-tight">{hover.name}</div>
           <div className="mt-0.5 text-xs text-ink/70">{hover.status}</div>
-          {hover.type && hover.type.trim() && (
-            <div className="mt-0.5 text-[11px] uppercase tracking-wider text-ink/50">
-              {hover.type}
-            </div>
-          )}
           {hover.nearStreet && (
             <div className="mt-1 text-xs italic text-ink/60">sob {hover.nearStreet}</div>
           )}

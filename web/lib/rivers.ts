@@ -31,6 +31,23 @@ export function burialOf(t: string | null | undefined): BurialStatus {
   }
 }
 
+export function burialFromCode(t: string | null | undefined): BurialStatus {
+  switch (t) {
+    case "n":
+      return "natural";
+    case "o":
+      return "open";
+    case "b":
+      return "buried";
+    case "l":
+      return "lake";
+    default:
+      return "unknown";
+  }
+}
+
+export type StoryMode = "story" | "explore";
+
 export const BURIAL_COLOR: Record<BurialStatus, string> = {
   natural: "#2d8fbb",
   open: "#8bb8d0",

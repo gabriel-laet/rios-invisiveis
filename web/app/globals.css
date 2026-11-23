@@ -18,3 +18,12 @@ body {
 .maplibregl-ctrl-attrib-inner a {
   color: #555;
 }
+
+/* The story scroller covers the whole viewport; its scrollbar would sit on
+   top of the layer panel, so hide it (wheel/touch/keys still scroll). */
+.story-scroller {
+  scrollbar-width: none;
+}
+.story-scroller::-webkit-scrollbar {
+  display: none;
+}

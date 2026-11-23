@@ -31,7 +31,11 @@ const SARA_TILES =
 const SATELLITE =
   "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
 
-export type BaseMapId = "light" | "dark" | "osm" | "satellite";
+// "rivers" = no street basemap: only São Paulo's outline and its water.
+export type BaseMapId = "rivers" | "light" | "dark" | "osm" | "satellite";
+
+const PAPER = "#f4ede0";
+const OUTSIDE = "#e4dccb";
 
 export function baseMapTiles(id: BaseMapId): string[] {
   switch (id) {
@@ -42,6 +46,7 @@ export function baseMapTiles(id: BaseMapId): string[] {
     case "satellite":
       return [SATELLITE];
     case "light":
+    case "rivers": // basemap layer is hidden; keep a valid source anyway
     default:
       return CARTO_LIGHT;
   }
@@ -83,10 +88,21 @@ export function buildStyle(base: BaseMapId = "light"): StyleSpecification {
         encoding: "terrarium",
         maxzoom: 15,
       },
+      // Whole-city network clipped to the municipality (etl/build-city-rivers.py).
+      // Props: t (n natural · o open channel · b buried · l lake), nm, via.
       rivers: {
         type: "geojson",
-        data: "/data/drenagem.geojson",
+        data: "/data/rios_sp.geojson",
         generateId: true,
+      },
+      // Everything outside the city; filled in at runtime by setCityMask().
+      mask: {
+        type: "geojson",
+        data: { type: "FeatureCollection", features: [] },
+      },
+      city: {
+        type: "geojson",
+        data: "/data/limite_sp.geojson",
       },
       water: {
         type: "geojson",
@@ -112,7 +128,13 @@ export function buildStyle(base: BaseMapId = "light"): StyleSpecification {
         : {}),
     },
     layers: [
-      { id: "basemap", type: "raster", source: "basemap" },
+      { id: "background", type: "background", paint: { "background-color": PAPER } },
+      {
+        id: "basemap",
+        type: "raster",
+        source: "basemap",
+        layout: { visibility: base === "rivers" ? "none" : "visible" },
+      },
 
       {
         id: "hillshade",
@@ -153,6 +175,26 @@ export function buildStyle(base: BaseMapId = "light"): StyleSpecification {
       },
 
       {
+        id: "city-mask",
+        type: "fill",
+        source: "mask",
+        paint: {
+          "fill-color": base === "rivers" ? OUTSIDE : PAPER,
+          "fill-opacity": base === "rivers" ? 1 : 0.72,
+        },
+      },
+      {
+        id: "city-outline",
+        type: "line",
+        source: "city",
+        paint: {
+          "line-color": "#3b3226",
+          "line-width": ["interpolate", ["linear"], ["zoom"], 9, 1, 14, 2.5],
+          "line-opacity": 0.7,
+        },
+      },
+
+      {
         id: "water-fill",
         type: "fill",
         source: "water",
@@ -167,7 +209,7 @@ export function buildStyle(base: BaseMapId = "light"): StyleSpecification {
         id: "rivers-buried-halo",
         type: "line",
         source: "rivers",
-        filter: ["==", ["get", "nm_tipo_curso_hidrografia"], "Trecho canalizado subterrâneo"],
+        filter: ["==", ["get", "t"], "b"],
         paint: {
           "line-color": BURIAL_COLOR.buried,
           "line-width": ["interpolate", ["linear"], ["zoom"], 10, 2, 14, 6, 17, 14],
@@ -180,7 +222,7 @@ export function buildStyle(base: BaseMapId = "light"): StyleSpecification {
         id: "rivers-buried",
         type: "line",
         source: "rivers",
-        filter: ["==", ["get", "nm_tipo_curso_hidrografia"], "Trecho canalizado subterrâneo"],
+        filter: ["==", ["get", "t"], "b"],
         paint: {
           "line-color": BURIAL_COLOR.buried,
           "line-width": ["interpolate", ["linear"], ["zoom"], 10, 0.8, 14, 2, 17, 4],
@@ -193,7 +235,7 @@ export function buildStyle(base: BaseMapId = "light"): StyleSpecification {
         id: "rivers-channelized",
         type: "line",
         source: "rivers",
-        filter: ["==", ["get", "nm_tipo_curso_hidrografia"], "Trecho canalizado a céu aberto"],
+        filter: ["==", ["get", "t"], "o"],
         paint: {
           "line-color": BURIAL_COLOR.open,
           "line-width": ["interpolate", ["linear"], ["zoom"], 10, 1, 14, 2.5, 17, 5],
@@ -205,7 +247,7 @@ export function buildStyle(base: BaseMapId = "light"): StyleSpecification {
         id: "rivers-natural",
         type: "line",
         source: "rivers",
-        filter: ["==", ["get", "nm_tipo_curso_hidrografia"], "Trecho em estado natural"],
+        filter: ["in", ["get", "t"], ["literal", ["n", "l"]]],
         paint: {
           "line-color": BURIAL_COLOR.natural,
           "line-width": ["interpolate", ["linear"], ["zoom"], 10, 1.2, 14, 3, 17, 6],
@@ -220,14 +262,14 @@ export function buildStyle(base: BaseMapId = "light"): StyleSpecification {
         minzoom: 13,
         layout: {
           "symbol-placement": "line",
-          "text-field": ["coalesce", ["get", "nm_acidente"], ""],
+          "text-field": ["coalesce", ["get", "nm"], ""],
           "text-font": ["Noto Sans Regular"],
           "text-size": 11,
           "text-letter-spacing": 0.06,
         },
         paint: {
           "text-color": "#1f2937",
-          "text-halo-color": "#f4ede0",
+          "text-halo-color": PAPER,
           "text-halo-width": 1.4,
         },
       },
@@ -245,4 +287,33 @@ export function buildStyle(base: BaseMapId = "light"): StyleSpecification {
         : []),
     ],
   };
+}
+
+/** World polygon with the city cut out, for the "only São Paulo" mask. */
+export function cityMask(boundary: GeoJSON.FeatureCollection): GeoJSON.Feature<GeoJSON.Polygon> {
+  const world: GeoJSON.Position[] = [
+    [-180, -85],
+    [180, -85],
+    [180, 85],
+    [-180, 85],
+    [-180, -85],
+  ];
+  const holes: GeoJSON.Position[][] = [];
+  for (const f of boundary.features) {
+    const g = f.geometry;
+    if (g.type === "Polygon") holes.push(g.coordinates[0]);
+    else if (g.type === "MultiPolygon") g.coordinates.forEach((poly) => holes.push(poly[0]));
+  }
+  return { type: "Feature", properties: {}, geometry: { type: "Polygon", coordinates: [world, ...holes] } };
+}
+
+/** Restyle the mask and basemap for the chosen base without rebuilding the style. */
+export function applyBaseLook(
+  map: { setPaintProperty: (l: string, p: string, v: unknown) => void; setLayoutProperty: (l: string, p: string, v: unknown) => void },
+  base: BaseMapId,
+) {
+  const riversOnly = base === "rivers";
+  map.setLayoutProperty("basemap", "visibility", riversOnly ? "none" : "visible");
+  map.setPaintProperty("city-mask", "fill-color", riversOnly ? OUTSIDE : PAPER);
+  map.setPaintProperty("city-mask", "fill-opacity", riversOnly ? 1 : 0.72);
 }

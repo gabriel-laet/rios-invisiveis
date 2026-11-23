@@ -12,6 +12,7 @@ export type LayerState = {
 };
 
 const BASES: Array<{ id: BaseMapId; label: string }> = [
+  { id: "rivers", label: "Só rios" },
   { id: "light", label: "Claro" },
   { id: "dark", label: "Escuro" },
   { id: "osm", label: "OSM" },
