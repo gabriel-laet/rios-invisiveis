@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Clip the city-wide drainage network to São Paulo's boundary and slim it.
 
-Usage: build-city-rivers.py <drenagem.geojson> <limite_sp.geojson> <out.geojson> [tolerance_deg]
+Usage: build-city-rivers.py <drenagem.geojson> <limite_sp.geojson> <out.geojson> [stats.json]
+
+With a 4th argument it also writes the numbers the story quotes (km by
+status, longest buried streams), so copy never hard-codes them.
 
 Output props are compact because the file covers the whole municipality
 (~28k segments):
@@ -14,6 +17,7 @@ Needs shapely (run via `uv run --with shapely` if it isn't installed).
 from __future__ import annotations
 
 import json
+import math
 import sys
 from collections import Counter
 from pathlib import Path
@@ -47,13 +51,18 @@ def main() -> int:
         print(__doc__)
         return 1
     src, boundary, dst = (Path(a) for a in sys.argv[1:4])
-    tol = float(sys.argv[4]) if len(sys.argv) > 4 else 0.00002  # ≈ 2 m
+    stats_path = Path(sys.argv[4]) if len(sys.argv) > 4 else None
+    tol = 0.00002  # ≈ 2 m
 
     city = shape(json.loads(boundary.read_text())["features"][0]["geometry"])
     city_p = prep(city)
 
     out = []
     counts: Counter[str] = Counter()
+    km: Counter[str] = Counter()
+    buried_by_name: Counter[str] = Counter()
+    lat0 = math.radians(city.centroid.y)
+    kx, ky = 111.320 * math.cos(lat0), 110.540  # km per degree, local projection
     for f in json.loads(src.read_text()).get("features", []):
         if not f.get("geometry"):
             continue
@@ -75,12 +84,29 @@ def main() -> int:
         if p.get("nm_via_proximo"):
             props["via"] = title_case(p["nm_via_proximo"])
         counts[t] += 1
+        length = sum(
+            math.hypot((b[0] - a[0]) * kx, (b[1] - a[1]) * ky)
+            for line in ([g.coords] if g.geom_type == "LineString" else [x.coords for x in getattr(g, "geoms", [])])
+            for a, b in zip(list(line)[:-1], list(line)[1:])
+        )
+        km[t] += length
+        if t == "b" and props.get("nm"):
+            buried_by_name[props["nm"]] += length
         out.append({"type": "Feature", "geometry": mapping(g), "properties": props})
 
     dst.write_text(
         json.dumps({"type": "FeatureCollection", "features": out}, ensure_ascii=False, separators=(",", ":"))
     )
     print(f"{dst.name}: {len(out)} segments {dict(counts)}  ({dst.stat().st_size // 1024} KB)")
+    if stats_path:
+        stats = {
+            "km_total": round(sum(km.values())),
+            "km": {k: round(v) for k, v in km.items()},
+            "segments": dict(counts),
+            "buried_longest": [{"nm": n, "km": round(v, 1)} for n, v in buried_by_name.most_common(10)],
+        }
+        stats_path.write_text(json.dumps(stats, ensure_ascii=False, indent=2))
+        print(f"{stats_path.name}: {stats['km_total']} km total, {stats['km'].get('b')} km buried")
     return 0
 
 

@@ -1,0 +1,57 @@
+{
+  "km_total": 5013,
+  "km": {
+    "n": 3099,
+    "l": 324,
+    "o": 228,
+    "b": 1363
+  },
+  "segments": {
+    "n": 19919,
+    "l": 2363,
+    "o": 1095,
+    "b": 4492
+  },
+  "buried_longest": [
+    {
+      "nm": "Córrego da Mooca",
+      "km": 10.0
+    },
+    {
+      "nm": "Córrego do Cordeiro",
+      "km": 7.9
+    },
+    {
+      "nm": "Córrego Pirajucara",
+      "km": 6.8
+    },
+    {
+      "nm": "Córrego da Traicao",
+      "km": 5.9
+    },
+    {
+      "nm": "Córrego Cabucu de Baixo",
+      "km": 5.8
+    },
+    {
+      "nm": "Córrego Cassandoca",
+      "km": 5.6
+    },
+    {
+      "nm": "Córrego Zavuvus",
+      "km": 5.4
+    },
+    {
+      "nm": "Rio da Pedra",
+      "km": 5.4
+    },
+    {
+      "nm": "Córrego Mandaqui",
+      "km": 5.2
+    },
+    {
+      "nm": "Córrego Tatuape",
+      "km": 5.1
+    }
+  ]
+}

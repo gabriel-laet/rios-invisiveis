@@ -83,11 +83,15 @@ python3 "$ETL/slim-geojson.py" "$OUT/bacia_hidrografica.geojson" "$OUT/bacia_hid
 echo "-> limite_sp (IBGE)"
 curl -s --fail --retry 3 --max-time 120 "$IBGE_SP" -o "$OUT/limite_sp.geojson"
 fetch drenagem cd_identificador "$CITY_BBOX" drenagem_sp_raw
-"${PY_GEO[@]}" "$ETL/build-city-rivers.py" "$OUT/drenagem_sp_raw.geojson" "$OUT/limite_sp.geojson" "$OUT/rios_sp.geojson"
+"${PY_GEO[@]}" "$ETL/build-city-rivers.py" "$OUT/drenagem_sp_raw.geojson" "$OUT/limite_sp.geojson" "$OUT/rios_sp.geojson" \
+  "$(cd "$ETL/.." && pwd)/web/lib/generated/stats.json"
 rm -f "$OUT/drenagem_sp_raw.geojson"
 
 # Copy to /public for the dev server
 WEB_PUBLIC="$(cd "$ETL/.." && pwd)/web/public/data"
 mkdir -p "$WEB_PUBLIC"
-cp "$OUT"/*.geojson "$WEB_PUBLIC/"
+# Only what the app loads (drenagem.geojson and the 25-yr flood stay in data/).
+for f in limite_sp rios_sp massa_d_agua mancha_inundacao_100 bacia_hidrografica; do
+  cp "$OUT/$f.geojson" "$WEB_PUBLIC/"
+done
 echo "Copied to $WEB_PUBLIC"
