@@ -1,295 +1,346 @@
-import type { RasterSourceSpecification, StyleSpecification } from "maplibre-gl";
-import { BURIAL_COLOR } from "./rivers";
+// "Concreto e água, à noite" — map style (docs/STORY_DESIGN.md §1.4).
+// No raster basemap by default: only São Paulo's outline and its water.
+// No symbol layers, so no glyphs: every label that matters is a DOM callout.
+import type {
+  ExpressionSpecification,
+  FilterSpecification,
+  LayerSpecification,
+  Map as MLMap,
+  StyleSpecification,
+} from "maplibre-gl";
+import { P } from "./palette";
+import { CURATED_NAMES, curatedStates } from "./timeline";
+import type { Network } from "./story";
 
-const OSM_TILES = [
-  "https://a.tile.openstreetmap.org/{z}/{x}/{y}.png",
-  "https://b.tile.openstreetmap.org/{z}/{x}/{y}.png",
-  "https://c.tile.openstreetmap.org/{z}/{x}/{y}.png",
-];
+export type BaseMapId = "agua" | "ruas" | "satelite";
 
-// CARTO raster basemaps now require a (free) key: https://carto.com/basemaps/apikey
-// Free tier: 5M req/mo non-commercial, 1M commercial. Attribution "© OpenStreetMap contributors, © CARTO".
-export const CARTO_KEY = process.env.NEXT_PUBLIC_CARTO_KEY || "";
-
-const cartoTiles = (style: "light_all" | "dark_all") =>
-  CARTO_KEY
-    ? [`https://basemaps.cartocdn.com/rastertiles/${style}/{z}/{x}/{y}.png?key=${CARTO_KEY}`]
-    : // Without a key CARTO serves "API KEY REQUIRED" watermark tiles — fall back to OSM.
-      OSM_TILES;
-
-const CARTO_LIGHT = cartoTiles("light_all");
-const CARTO_DARK = cartoTiles("dark_all");
-
-// AWS Open Data Terrain Tiles (Terrarium encoding), no API key needed
 const TERRARIUM = "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png";
+const SATELLITE = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
+// Keyless vector tiles (OpenMapTiles schema), only used for faint street hints.
+const OPENFREEMAP = "https://tiles.openfreemap.org/planet";
+const SARA_TILES = process.env.NEXT_PUBLIC_SARA_TILES || "";
 
-// Historical SARA 1930 tiles — placeholder. Override via NEXT_PUBLIC_SARA_TILES.
-const SARA_TILES =
-  process.env.NEXT_PUBLIC_SARA_TILES ||
-  "";
+type Stops = Array<[number, number]>;
+const byZoom = (stops: Stops, k = 1): ExpressionSpecification =>
+  ["interpolate", ["linear"], ["zoom"], ...stops.flatMap(([z, v]) => [z, v * k])] as ExpressionSpecification;
 
-const SATELLITE =
-  "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
+const W = {
+  passado: [[9, 0.4], [12, 0.8], [15, 1.6]] as Stops,
+  casing: [[9, 1.4], [12, 2.4], [15, 5], [17, 9]] as Stops,
+  canal: [[9, 0.6], [12, 1.1], [15, 2.4], [17, 4.5]] as Stops,
+  vivoGlow: [[9, 2], [15, 8]] as Stops,
+  vivo: [[9, 0.6], [12, 1.2], [15, 2.5], [17, 5]] as Stops,
+  enterradoGlow: [[9, 2], [12, 5], [15, 12], [17, 22]] as Stops,
+  enterrado: [[9, 0.5], [12, 1], [15, 2], [17, 3.5]] as Stops,
+};
 
-// "rivers" = no street basemap: only São Paulo's outline and its water.
-export type BaseMapId = "rivers" | "light" | "dark" | "osm" | "satellite";
+/** Base opacities; the network code scales these (focus dimming, the "regra" fade). */
+const BASE_OPACITY: Record<string, number> = {
+  "net-passado": 0.7,
+  "net-canal-casing": 0.9,
+  "net-canal": 1,
+  "net-vivo-glow": 0.18,
+  "net-vivo": 1,
+  "net-enterrado-glow": 0.22,
+  "net-enterrado": 0.95,
+};
+const ATUAL_LAYERS = ["net-canal-casing", "net-canal", "net-vivo-glow", "net-vivo", "net-enterrado-glow", "net-enterrado"];
+const CURATED_LAYERS = ["cur-vivo", "cur-obra", "cur-final-canal", "cur-final-vivo", "cur-final-enterrado"];
 
-const PAPER = "#f4ede0";
-const OUTSIDE = "#e4dccb";
+type E = ExpressionSpecification;
+const T = (code: string | string[]): E =>
+  Array.isArray(code) ? ["in", ["get", "t"], ["literal", code]] : ["==", ["get", "t"], code];
+const NM_IN = (names: string[]): E => ["in", ["coalesce", ["get", "nm"], ""], ["literal", names]];
+const NONE: E = ["==", ["get", "t"], "__none__"];
+const F = (e: E | null) => e as FilterSpecification | null;
+const fade = { duration: 400, delay: 0 };
 
-export function baseMapTiles(id: BaseMapId): string[] {
-  switch (id) {
-    case "dark":
-      return CARTO_DARK;
-    case "osm":
-      return OSM_TILES;
-    case "satellite":
-      return [SATELLITE];
-    case "light":
-    case "rivers": // basemap layer is hidden; keep a valid source anyway
-    default:
-      return CARTO_LIGHT;
+export function buildStyle(): StyleSpecification {
+  const layers: LayerSpecification[] = [
+    { id: "bg", type: "background", paint: { "background-color": P.asfalto } },
+    {
+      id: "basemap",
+      type: "raster",
+      source: "satellite",
+      layout: { visibility: "none" },
+      paint: { "raster-saturation": -0.8, "raster-brightness-max": 0.55, "raster-opacity": 0.6 },
+    },
+    { id: "land", type: "fill", source: "limite", paint: { "fill-color": P.chao } },
+    {
+      id: "hillshade",
+      type: "hillshade",
+      source: "hillshade",
+      paint: {
+        "hillshade-shadow-color": "rgba(0,0,0,0.55)",
+        "hillshade-highlight-color": "rgba(236,232,225,0.07)",
+        "hillshade-accent-color": P.asfalto,
+        "hillshade-exaggeration": 0.3,
+      },
+    },
+    {
+      id: "streets",
+      type: "line",
+      source: "ofm",
+      "source-layer": "transportation",
+      filter: ["in", ["get", "class"], ["literal", ["motorway", "trunk", "primary"]]],
+      layout: { visibility: "none" },
+      paint: {
+        "line-color": P.garoa,
+        "line-opacity": ["interpolate", ["linear"], ["zoom"], 11, 0, 12, 0.06, 15, 0.14],
+        "line-width": ["interpolate", ["linear"], ["zoom"], 11, 0.4, 15, 1.2],
+      },
+    },
+    {
+      id: "flood-100",
+      type: "fill",
+      source: "flood100",
+      layout: { visibility: "none" },
+      paint: { "fill-color": P.enchente, "fill-opacity": 0.28 },
+    },
+    {
+      id: "basins",
+      type: "line",
+      source: "basins",
+      layout: { visibility: "none" },
+      paint: { "line-color": P.neblina, "line-opacity": 0.25, "line-width": 0.8, "line-dasharray": [4, 3] },
+    },
+    {
+      id: "water-fill",
+      type: "fill",
+      source: "water",
+      paint: { "fill-color": P.lago, "fill-opacity": 0.55, "fill-outline-color": P.rio },
+    },
+
+    // Past-tense network: everything not curated, colour set by year in code.
+    {
+      id: "net-passado",
+      type: "line",
+      source: "rios",
+      filter: ["!", NM_IN(CURATED_NAMES)],
+      layout: { visibility: "none", "line-cap": "round" },
+      paint: { "line-color": P.memoria, "line-width": byZoom(W.passado), "line-opacity": 0.7, "line-opacity-transition": fade },
+    },
+
+    // Present-tense network: real status from GeoSampa.
+    {
+      id: "net-canal-casing",
+      type: "line",
+      source: "rios",
+      filter: T("o"),
+      paint: { "line-color": P.muro, "line-width": byZoom(W.casing), "line-opacity": 0.9, "line-opacity-transition": fade },
+    },
+    {
+      id: "net-canal",
+      type: "line",
+      source: "rios",
+      filter: T("o"),
+      paint: { "line-color": P.canal, "line-width": byZoom(W.canal), "line-opacity": 1, "line-opacity-transition": fade },
+    },
+    {
+      id: "net-vivo-glow",
+      type: "line",
+      source: "rios",
+      filter: T(["n", "l"]),
+      paint: {
+        "line-color": P.rio,
+        "line-width": byZoom(W.vivoGlow),
+        "line-blur": 3,
+        "line-opacity": 0.18,
+        "line-opacity-transition": fade,
+      },
+    },
+    {
+      id: "net-vivo",
+      type: "line",
+      source: "rios",
+      filter: T(["n", "l"]),
+      layout: { "line-cap": "round" },
+      paint: {
+        "line-color": ["case", ["==", ["get", "t"], "l"], P.lago, P.rio],
+        "line-width": byZoom(W.vivo),
+        "line-opacity": 1,
+        "line-opacity-transition": fade,
+      },
+    },
+    {
+      id: "net-enterrado-glow",
+      type: "line",
+      source: "rios",
+      filter: T("b"),
+      paint: {
+        "line-color": P.sodio,
+        "line-width": byZoom(W.enterradoGlow),
+        "line-blur": ["interpolate", ["linear"], ["zoom"], 9, 2, 15, 8],
+        "line-opacity": 0.22,
+        "line-opacity-transition": fade,
+      },
+    },
+    {
+      id: "net-enterrado",
+      type: "line",
+      source: "rios",
+      filter: T("b"),
+      paint: {
+        "line-color": P.sodioClaro,
+        "line-width": byZoom(W.enterrado),
+        "line-dasharray": [2, 1.5],
+        "line-opacity": 0.95,
+        "line-opacity-transition": fade,
+      },
+    },
+
+    // Curated rivers in the past: vivo → obra → final (today's real status).
+    {
+      id: "cur-vivo",
+      type: "line",
+      source: "rios",
+      filter: NONE,
+      layout: { visibility: "none", "line-cap": "round" },
+      paint: { "line-color": P.rio, "line-width": byZoom(W.vivo, 1.6) },
+    },
+    {
+      id: "cur-obra",
+      type: "line",
+      source: "rios",
+      filter: NONE,
+      layout: { visibility: "none" },
+      paint: { "line-color": P.garoa, "line-width": byZoom(W.vivo, 1.4), "line-dasharray": [1, 1] },
+    },
+    {
+      id: "cur-final-canal",
+      type: "line",
+      source: "rios",
+      filter: NONE,
+      layout: { visibility: "none" },
+      paint: { "line-color": P.canal, "line-width": byZoom(W.canal, 1.4) },
+    },
+    {
+      id: "cur-final-vivo",
+      type: "line",
+      source: "rios",
+      filter: NONE,
+      layout: { visibility: "none", "line-cap": "round" },
+      paint: { "line-color": P.rio, "line-width": byZoom(W.vivo, 1.4) },
+    },
+    {
+      id: "cur-final-enterrado",
+      type: "line",
+      source: "rios",
+      filter: NONE,
+      layout: { visibility: "none" },
+      paint: { "line-color": P.sodioClaro, "line-width": byZoom(W.enterrado, 1.8), "line-dasharray": [2, 1.5] },
+    },
+
+    // Focus: whatever the step (or "Rio perto de mim") is talking about.
+    {
+      id: "foco-glow",
+      type: "line",
+      source: "rios",
+      filter: NONE,
+      paint: {
+        "line-color": P.sodioClaro,
+        "line-width": byZoom(W.vivo, 2.2 * 2.5),
+        "line-blur": 6,
+        "line-opacity": 0.5,
+      },
+    },
+
+    {
+      id: "foco",
+      type: "line",
+      source: "rios",
+      filter: NONE,
+      layout: { "line-cap": "round" },
+      paint: {
+        "line-color": ["match", ["get", "t"], "b", P.sodioClaro, "o", P.canal, "l", P.lago, P.rio],
+        "line-width": byZoom(W.vivo, 1.8),
+      },
+    },
+
+    { id: "mask", type: "fill", source: "mask", paint: { "fill-color": P.breu, "fill-opacity": 0.92 } },
+    {
+      id: "outline-glow",
+      type: "line",
+      source: "limite",
+      paint: { "line-color": P.garoa, "line-width": 8, "line-blur": 8, "line-opacity": 0.06 },
+    },
+    {
+      id: "outline",
+      type: "line",
+      source: "limite",
+      paint: {
+        "line-color": P.garoa,
+        "line-width": ["interpolate", ["linear"], ["zoom"], 9, 1.2, 14, 2],
+        "line-opacity": 0.55,
+      },
+    },
+
+    // "Rio perto de mim"
+    {
+      id: "perto-prumo",
+      type: "line",
+      source: "perto",
+      filter: ["==", ["geometry-type"], "LineString"],
+      paint: { "line-color": P.garoa, "line-width": 1.5, "line-dasharray": [1, 2] },
+    },
+    {
+      id: "perto-ponto",
+      type: "circle",
+      source: "perto",
+      filter: ["==", ["geometry-type"], "Point"],
+      paint: { "circle-color": P.garoa, "circle-radius": 5, "circle-stroke-width": 2, "circle-stroke-color": P.asfalto },
+    },
+  ];
+
+  if (SARA_TILES) {
+    layers.splice(layers.findIndex((l) => l.id === "land") + 1, 0, {
+      id: "sara1930",
+      type: "raster",
+      source: "sara1930",
+      layout: { visibility: "none" },
+      paint: { "raster-opacity": 0.85 },
+    });
   }
-}
 
-export function basemapSource(base: BaseMapId): RasterSourceSpecification {
-  return {
-    type: "raster",
-    tiles: baseMapTiles(base),
-    tileSize: 256,
-    attribution:
-      base === "satellite"
-        ? "Esri, Maxar, Earthstar Geographics"
-        : base === "osm" || !CARTO_KEY
-          ? "© OpenStreetMap contributors"
-          : "© OpenStreetMap contributors · © CARTO",
-    maxzoom: 19,
-  };
-}
+  const empty: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
 
-export function buildStyle(base: BaseMapId = "light"): StyleSpecification {
   return {
     version: 8,
-    glyphs: "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",
     sources: {
-      basemap: basemapSource(base),
+      satellite: { type: "raster", tiles: [SATELLITE], tileSize: 256, maxzoom: 19, attribution: "Esri, Maxar, Earthstar Geographics" },
+      ofm: { type: "vector", url: OPENFREEMAP, attribution: "OpenFreeMap © OpenMapTiles © OpenStreetMap" },
       terrarium: {
         type: "raster-dem",
         tiles: [TERRARIUM],
         tileSize: 256,
         encoding: "terrarium",
         maxzoom: 15,
-        attribution: "Terrain: AWS Terrain Tiles (Mapzen)",
+        attribution: "Relevo: AWS Terrain Tiles",
       },
-      hillshade: {
-        type: "raster-dem",
-        tiles: [TERRARIUM],
-        tileSize: 256,
-        encoding: "terrarium",
-        maxzoom: 15,
-      },
-      // Whole-city network clipped to the municipality (etl/build-city-rivers.py).
-      // Props: t (n natural · o open channel · b buried · l lake), nm, via.
-      rivers: {
+      hillshade: { type: "raster-dem", tiles: [TERRARIUM], tileSize: 256, encoding: "terrarium", maxzoom: 15 },
+      limite: { type: "geojson", data: "/data/limite_sp.geojson", attribution: "Limite: IBGE" },
+      rios: {
         type: "geojson",
         data: "/data/rios_sp.geojson",
         generateId: true,
+        tolerance: 0.6,
+        buffer: 64,
+        attribution: "Rios: GeoSampa (Prefeitura de São Paulo)",
       },
-      // Everything outside the city; filled in at runtime by setCityMask().
-      mask: {
-        type: "geojson",
-        data: { type: "FeatureCollection", features: [] },
-      },
-      city: {
-        type: "geojson",
-        data: "/data/limite_sp.geojson",
-      },
-      water: {
-        type: "geojson",
-        data: "/data/massa_d_agua.geojson",
-      },
-      flood100: {
-        type: "geojson",
-        data: "/data/mancha_inundacao_100.geojson",
-      },
-      basins: {
-        type: "geojson",
-        data: "/data/bacia_hidrografica.geojson",
-      },
+      water: { type: "geojson", data: "/data/massa_d_agua.geojson" },
+      flood100: { type: "geojson", data: "/data/mancha_inundacao_100.geojson" },
+      basins: { type: "geojson", data: "/data/bacia_hidrografica.geojson" },
+      mask: { type: "geojson", data: empty },
+      perto: { type: "geojson", data: empty },
       ...(SARA_TILES
-        ? {
-            sara1930: {
-              type: "raster",
-              tiles: [SARA_TILES],
-              tileSize: 256,
-              attribution: "SARA Brasil 1930 · GeoSampa",
-            },
-          }
+        ? { sara1930: { type: "raster" as const, tiles: [SARA_TILES], tileSize: 256, attribution: "SARA Brasil 1930 · GeoSampa" } }
         : {}),
     },
-    layers: [
-      { id: "background", type: "background", paint: { "background-color": PAPER } },
-      {
-        id: "basemap",
-        type: "raster",
-        source: "basemap",
-        layout: { visibility: base === "rivers" ? "none" : "visible" },
-      },
-
-      {
-        id: "hillshade",
-        type: "hillshade",
-        source: "hillshade",
-        layout: { visibility: "none" },
-        paint: {
-          "hillshade-shadow-color": "#1a1a1a",
-          "hillshade-highlight-color": "#ffffff",
-          "hillshade-accent-color": "#374151",
-          "hillshade-exaggeration": 0.45,
-        },
-      },
-
-      {
-        id: "flood-100",
-        type: "fill",
-        source: "flood100",
-        layout: { visibility: "none" },
-        paint: {
-          "fill-color": "#2563eb",
-          "fill-opacity": ["interpolate", ["linear"], ["zoom"], 10, 0.5, 15, 0.35],
-          "fill-outline-color": "#1e3a8a",
-        },
-      },
-
-      {
-        id: "basins-outline",
-        type: "line",
-        source: "basins",
-        layout: { visibility: "none" },
-        paint: {
-          "line-color": "#6b4f2a",
-          "line-width": ["interpolate", ["linear"], ["zoom"], 10, 1.2, 15, 2.2],
-          "line-opacity": 0.85,
-          "line-dasharray": [3, 2],
-        },
-      },
-
-      {
-        id: "city-mask",
-        type: "fill",
-        source: "mask",
-        paint: {
-          "fill-color": base === "rivers" ? OUTSIDE : PAPER,
-          "fill-opacity": base === "rivers" ? 1 : 0.72,
-        },
-      },
-      {
-        id: "city-outline",
-        type: "line",
-        source: "city",
-        paint: {
-          "line-color": "#3b3226",
-          "line-width": ["interpolate", ["linear"], ["zoom"], 9, 1, 14, 2.5],
-          "line-opacity": 0.7,
-        },
-      },
-
-      {
-        id: "water-fill",
-        type: "fill",
-        source: "water",
-        paint: {
-          "fill-color": BURIAL_COLOR.lake,
-          "fill-opacity": 0.55,
-          "fill-outline-color": "#1e5478",
-        },
-      },
-
-      {
-        id: "rivers-buried-halo",
-        type: "line",
-        source: "rivers",
-        filter: ["==", ["get", "t"], "b"],
-        paint: {
-          "line-color": BURIAL_COLOR.buried,
-          "line-width": ["interpolate", ["linear"], ["zoom"], 10, 2, 14, 6, 17, 14],
-          "line-opacity": 0.18,
-          "line-blur": 6,
-        },
-      },
-
-      {
-        id: "rivers-buried",
-        type: "line",
-        source: "rivers",
-        filter: ["==", ["get", "t"], "b"],
-        paint: {
-          "line-color": BURIAL_COLOR.buried,
-          "line-width": ["interpolate", ["linear"], ["zoom"], 10, 0.8, 14, 2, 17, 4],
-          "line-opacity": 0.95,
-          "line-dasharray": [2, 2],
-        },
-      },
-
-      {
-        id: "rivers-channelized",
-        type: "line",
-        source: "rivers",
-        filter: ["==", ["get", "t"], "o"],
-        paint: {
-          "line-color": BURIAL_COLOR.open,
-          "line-width": ["interpolate", ["linear"], ["zoom"], 10, 1, 14, 2.5, 17, 5],
-          "line-opacity": 0.9,
-        },
-      },
-
-      {
-        id: "rivers-natural",
-        type: "line",
-        source: "rivers",
-        filter: ["in", ["get", "t"], ["literal", ["n", "l"]]],
-        paint: {
-          "line-color": BURIAL_COLOR.natural,
-          "line-width": ["interpolate", ["linear"], ["zoom"], 10, 1.2, 14, 3, 17, 6],
-          "line-opacity": 0.95,
-        },
-      },
-
-      {
-        id: "rivers-labels",
-        type: "symbol",
-        source: "rivers",
-        minzoom: 13,
-        layout: {
-          "symbol-placement": "line",
-          "text-field": ["coalesce", ["get", "nm"], ""],
-          "text-font": ["Noto Sans Regular"],
-          "text-size": 11,
-          "text-letter-spacing": 0.06,
-        },
-        paint: {
-          "text-color": "#1f2937",
-          "text-halo-color": PAPER,
-          "text-halo-width": 1.4,
-        },
-      },
-
-      ...(SARA_TILES
-        ? [
-            {
-              id: "sara1930",
-              type: "raster" as const,
-              source: "sara1930",
-              layout: { visibility: "none" as const },
-              paint: { "raster-opacity": 0.85 },
-            },
-          ]
-        : []),
-    ],
+    layers,
   };
 }
 
-/** World polygon with the city cut out, for the "only São Paulo" mask. */
+/** World polygon with the city cut out. */
 export function cityMask(boundary: GeoJSON.FeatureCollection): GeoJSON.Feature<GeoJSON.Polygon> {
   const world: GeoJSON.Position[] = [
     [-180, -85],
@@ -301,19 +352,78 @@ export function cityMask(boundary: GeoJSON.FeatureCollection): GeoJSON.Feature<G
   const holes: GeoJSON.Position[][] = [];
   for (const f of boundary.features) {
     const g = f.geometry;
-    if (g.type === "Polygon") holes.push(g.coordinates[0]);
-    else if (g.type === "MultiPolygon") g.coordinates.forEach((poly) => holes.push(poly[0]));
+    if (g?.type === "Polygon") holes.push(g.coordinates[0]);
+    else if (g?.type === "MultiPolygon") g.coordinates.forEach((poly) => holes.push(poly[0]));
   }
   return { type: "Feature", properties: {}, geometry: { type: "Polygon", coordinates: [world, ...holes] } };
 }
 
-/** Restyle the mask and basemap for the chosen base without rebuilding the style. */
-export function applyBaseLook(
-  map: { setPaintProperty: (l: string, p: string, v: unknown) => void; setLayoutProperty: (l: string, p: string, v: unknown) => void },
-  base: BaseMapId,
-) {
-  const riversOnly = base === "rivers";
-  map.setLayoutProperty("basemap", "visibility", riversOnly ? "none" : "visible");
-  map.setPaintProperty("city-mask", "fill-color", riversOnly ? OUTSIDE : PAPER);
-  map.setPaintProperty("city-mask", "fill-opacity", riversOnly ? 1 : 0.72);
+const vis = (map: MLMap, id: string, on: boolean) => {
+  if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", on ? "visible" : "none");
+};
+const opacity = (map: MLMap, id: string, v: number) => {
+  if (map.getLayer(id)) map.setPaintProperty(id, "line-opacity", v);
+};
+
+export type NetworkState = {
+  network: Network;
+  year: number | string;
+  progress: number;
+  focus?: string[];
+  glow?: "normal" | "forte";
+  /** timeline events whose beat has already been told (their rivers stay final) */
+  told?: ReadonlySet<string>;
+};
+
+/** Draw the river network for a story state (explore uses "atual"). */
+export function applyNetwork(map: MLMap, s: NetworkState) {
+  const focus = s.focus ?? [];
+  const dim = focus.length ? 0.35 : 1;
+  const y = typeof s.year === "number" ? s.year : 2026;
+
+  map.setFilter("foco-glow", F(focus.length ? NM_IN(focus) : NONE));
+  // In past-tense beats the curated layers already draw the focus rivers in their year's state.
+  map.setFilter("foco", F(focus.length && s.network !== "passado" ? NM_IN(focus) : NONE));
+
+  // Present-tense layers
+  const atualK = s.network === "atual" ? 1 : s.network === "regra" ? s.progress : 0;
+  for (const id of ATUAL_LAYERS) {
+    vis(map, id, atualK > 0);
+    let o = BASE_OPACITY[id] * atualK * dim;
+    if (id === "net-enterrado-glow" && s.glow === "forte") o = 0.45 * atualK * dim;
+    opacity(map, id, o);
+  }
+
+  // Past-tense layers
+  const passadoK = s.network === "passado" ? 1 : s.network === "regra" ? 1 - s.progress : 0;
+  vis(map, "net-passado", passadoK > 0);
+  if (passadoK > 0) {
+    map.setPaintProperty("net-passado", "line-color", y < 1900 ? P.rio : P.memoria);
+    opacity(map, "net-passado", BASE_OPACITY["net-passado"] * passadoK * dim);
+    // in "regra" every segment fades together (no implied order)
+    map.setFilter("net-passado", F(s.network === "regra" ? null : ["!", NM_IN(CURATED_NAMES)]));
+  }
+
+  // Curated rivers
+  const showCurated = s.network === "passado";
+  CURATED_LAYERS.forEach((id) => vis(map, id, showCurated));
+  if (showCurated) {
+    const st = curatedStates(y, s.told);
+    map.setFilter("cur-vivo", F(st.vivo.length ? NM_IN(st.vivo) : NONE));
+    map.setFilter("cur-obra", F(st.obra.length ? NM_IN(st.obra) : NONE));
+    const fin = st.final.length ? NM_IN(st.final) : NONE;
+    map.setFilter("cur-final-canal", F(["all", fin, T("o")]));
+    map.setFilter("cur-final-vivo", F(["all", fin, T(["n", "l"])]));
+    map.setFilter("cur-final-enterrado", F(["all", fin, T("b")]));
+  }
+}
+
+export function setLayerVisible(map: MLMap, id: string, on: boolean) {
+  vis(map, id, on);
+}
+
+export function applyBase(map: MLMap, base: BaseMapId) {
+  vis(map, "basemap", base === "satelite");
+  vis(map, "land", base !== "satelite");
+  vis(map, "streets", base === "ruas");
 }

@@ -2,15 +2,15 @@
 
 import dynamic from "next/dynamic";
 
-const MapView = dynamic(() => import("./MapView"), {
+const MapStage = dynamic(() => import("./MapStage"), {
   ssr: false,
   loading: () => (
-    <div className="flex h-full w-full items-center justify-center bg-paper">
-      <div className="font-serif text-sm italic text-ink/50">carregando mapa…</div>
+    <div className="fixed inset-0 flex items-center justify-center bg-asfalto">
+      <div className="font-mono text-xs uppercase tracking-[0.12em] text-neblina">carregando a água…</div>
     </div>
   ),
 });
 
 export default function MapShell() {
-  return <MapView />;
+  return <MapStage />;
 }

@@ -1,200 +1,208 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import maplibregl, { Map as MLMap, type MapMouseEvent } from "maplibre-gl";
-import { applyBaseLook, basemapSource, buildStyle, cityMask, type BaseMapId } from "@/lib/mapStyle";
-import { BURIAL_LABEL_PT, CHAPTERS, SP_CENTER, burialFromCode, type StoryMode } from "@/lib/rivers";
-import Legend from "./Legend";
+import { applyBase, applyNetwork, buildStyle, cityMask, setLayerVisible, type BaseMapId } from "@/lib/mapStyle";
+import { STEP_BY_ID, toldBefore, type Camera, type StoryStep } from "@/lib/story";
+import { formatTitle, formatVia } from "@/lib/timeline";
+import { getStory, isMobile, prefersReducedMotion, setStory, subscribeStory, useStory } from "@/lib/storyStore";
+import { bboxOf, loadCity, setMap } from "@/lib/mapHandle";
 import LayerToggles, { type LayerState } from "./LayerToggles";
+import Legend from "./Legend";
 import HistoricalSwipe from "./HistoricalSwipe";
 
-type HoverInfo = {
-  x: number;
-  y: number;
-  name: string;
-  status: string;
-  nearStreet: string | null;
+const STATUS: Record<string, string> = {
+  n: "A céu aberto",
+  l: "Lago ou represa",
+  o: "Canal de concreto",
+  b: "Enterrado",
 };
 
+type Hover = { x: number; y: number; name: string; status: string; t: string; via: string | null };
+
 const DEFAULT_LAYERS: LayerState = {
-  base: "rivers" as BaseMapId,
+  base: "agua",
   terrain3D: false,
-  hillshade: false,
+  hillshade: true,
   flood100: false,
   basins: false,
   historical: false,
 };
 
+const SP_CENTER: [number, number] = [-46.63, -23.68];
+
 export default function MapView() {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MLMap | null>(null);
+  const cityBounds = useRef<[number, number, number, number] | null>(null);
   const [ready, setReady] = useState(false);
   const [layers, setLayers] = useState<LayerState>(DEFAULT_LAYERS);
-  const [hover, setHover] = useState<HoverInfo | null>(null);
-  const [activeChapter, setActiveChapter] = useState<string>("intro");
-  const [mode, setMode] = useState<StoryMode>("story");
-  const baseRef = useRef<BaseMapId>(DEFAULT_LAYERS.base);
+  const [hover, setHover] = useState<Hover | null>(null);
+  const mode = useStory((s) => s.mode);
 
-  const initialStyle = useMemo(() => buildStyle(DEFAULT_LAYERS.base), []);
-
+  // ---- create the map -------------------------------------------------------
   useEffect(() => {
     if (!containerRef.current) return;
-
     const map = new maplibregl.Map({
       container: containerRef.current,
-      style: initialStyle,
+      style: buildStyle(),
       center: SP_CENTER,
-      zoom: 11,
-      pitch: 0,
-      bearing: 0,
-      hash: false,
+      zoom: 9.6,
       attributionControl: { compact: true },
       maxPitch: 75,
+      fadeDuration: 0,
     });
+    map.addControl(new maplibregl.ScaleControl({ maxWidth: 100, unit: "metric" }), "bottom-right");
+    setInteractive(map, false);
 
-    map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "top-right");
-    map.addControl(new maplibregl.ScaleControl({ maxWidth: 120, unit: "metric" }));
-
-    map.on("load", () => {
+    map.on("load", async () => {
+      const city = await loadCity().catch(() => null);
+      if (city) {
+        (map.getSource("mask") as maplibregl.GeoJSONSource).setData(cityMask(city));
+        cityBounds.current = bboxOf(city);
+      }
       mapRef.current = map;
+      setMap(map);
       setReady(true);
-      fetch("/data/limite_sp.geojson")
-        .then((r) => r.json())
-        .then((fc: GeoJSON.FeatureCollection) => {
-          const src = map.getSource("mask") as maplibregl.GeoJSONSource | undefined;
-          src?.setData(cityMask(fc));
-        })
-        .catch(() => {});
+      setStory({ mapReady: true });
     });
 
-    const riverHoverLayers = ["rivers-natural", "rivers-channelized", "rivers-buried"];
+    map.on("zoomend", () => updateTerrainExaggeration(map));
 
+    const hoverLayers = ["net-vivo", "net-canal", "net-enterrado"];
     const onMove = (e: MapMouseEvent) => {
-      const features = map.queryRenderedFeatures(e.point, { layers: riverHoverLayers });
-      if (!features.length) {
+      if (getStory().mode !== "explore") return;
+      const f = map.queryRenderedFeatures(e.point, { layers: hoverLayers })[0];
+      if (!f) {
         setHover(null);
         map.getCanvas().style.cursor = "";
         return;
       }
-      const f = features[0];
-      const p = (f.properties ?? {}) as Record<string, string | number | null>;
+      const p = (f.properties ?? {}) as Record<string, string | undefined>;
       map.getCanvas().style.cursor = "pointer";
       setHover({
         x: e.point.x,
         y: e.point.y,
-        name: (p.nm as string) || "Córrego sem nome",
-        status: BURIAL_LABEL_PT[burialFromCode(p.t as string | null)],
-        nearStreet: (p.via as string) || null,
+        name: formatTitle(p.nm),
+        status: STATUS[p.t ?? ""] ?? "",
+        t: p.t ?? "",
+        via: formatVia(p.via),
       });
     };
-
-    map.on("zoomend", () => updateTerrainExaggeration(map));
     map.on("mousemove", onMove);
+    map.on("click", onMove); // tap tooltips on touch
     map.on("mouseleave", () => setHover(null));
 
     return () => {
+      setMap(null);
       map.remove();
       mapRef.current = null;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Apply layer toggles
+  // ---- story: camera + layers per step, network per year --------------------
   useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !ready) return;
+    if (!ready) return;
+    const map = mapRef.current!;
+    let lastStep = "";
+    let lastNetKey = "";
+    let lastLate = false;
+    let lastStepAt = 0;
+    let lastMode = "";
 
-    // Only swap the basemap when it actually changed. Replacing just the raster
-    // source keeps the GeoJSON sources (and their ~10 MB of data) in place.
-    if (baseRef.current !== layers.base) {
-      const prev = baseRef.current;
-      baseRef.current = layers.base;
-      // "rivers" just hides the raster; only swap tiles for a real basemap.
-      if (layers.base !== "rivers" && layers.base !== prev) {
-        map.removeLayer("basemap");
-        map.removeSource("basemap");
-        map.addSource("basemap", basemapSource(layers.base));
-        map.addLayer({ id: "basemap", type: "raster", source: "basemap" }, "hillshade");
+    const sync = () => {
+      const s = getStory();
+      if (s.mode !== lastMode) {
+        lastMode = s.mode;
+        lastStep = ""; // re-apply the step when coming back from explore
+        lastNetKey = "";
       }
-      applyBaseLook(map, layers.base);
-    }
-    applyToggleVisibility(map, layers);
-  }, [layers, ready]);
+      if (s.mode !== "story") return;
+      const step = STEP_BY_ID[s.stepId];
+      if (!step) return;
 
-  // Fly to chapters
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !ready) return;
-    const ch = CHAPTERS.find((c) => c.slug === activeChapter);
-    if (!ch) return;
-    map.flyTo({
-      center: ch.center,
-      zoom: ch.zoom,
-      pitch: ch.pitch,
-      bearing: ch.bearing,
-      essential: true,
-      duration: 2200,
-      curve: 1.4,
-    });
-    if (ch.pitch > 10 && !layers.terrain3D) {
-      setLayers((s) => ({ ...s, terrain3D: true }));
-    }
-  }, [activeChapter, ready]);
+      if (step.id !== lastStep) {
+        const fast = performance.now() - lastStepAt < 400;
+        lastStepAt = performance.now();
+        lastStep = step.id;
+        lastLate = false;
+        moveCamera(map, step.camera, cityBounds.current, fast);
+        applyStepLayers(map, step);
+      }
+      if (step.cameraLate && s.progress >= 0.5 !== lastLate) {
+        lastLate = s.progress >= 0.5;
+        moveCamera(map, lastLate ? step.cameraLate : step.camera, cityBounds.current, false);
+      }
 
-  // Story mode: the map is a camera-driven backdrop. Explore: hand it over.
+      const yearKey = typeof s.year === "number" ? Math.floor(s.year) : s.year;
+      const netKey = `${step.id}|${yearKey}|${step.network === "regra" ? s.progress.toFixed(2) : ""}`;
+      if (netKey !== lastNetKey) {
+        lastNetKey = netKey;
+        applyNetwork(map, {
+          network: step.network,
+          year: s.year,
+          progress: s.progress,
+          focus: step.focus,
+          glow: step.glow,
+          told: toldBefore(step.id),
+        });
+      }
+    };
+    sync();
+    return subscribeStory(sync);
+  }, [ready]);
+
+  // ---- mode switch ------------------------------------------------------------
   useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !ready) return;
-    const handlers = [
-      map.scrollZoom,
-      map.dragPan,
-      map.dragRotate,
-      map.boxZoom,
-      map.doubleClickZoom,
-      map.keyboard,
-      map.touchZoomRotate,
-      map.touchPitch,
-    ];
-    handlers.forEach((h) => (mode === "explore" ? h.enable() : h.disable()));
-    if (mode === "story") setHover(null);
+    if (!ready) return;
+    const map = mapRef.current!;
+    setInteractive(map, mode === "explore");
+    const canvas = map.getCanvas();
+    canvas.setAttribute("aria-hidden", mode === "explore" ? "false" : "true");
+    canvas.tabIndex = mode === "explore" ? 0 : -1;
+    canvas.setAttribute("aria-label", "Mapa interativo dos rios de São Paulo");
+    if (mode === "explore") {
+      applyNetwork(map, { network: "atual", year: "HOJE", progress: 1 });
+      applyExploreLayers(map, layers);
+    } else {
+      setHover(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, ready]);
 
+  // ---- explore: layer toggles -----------------------------------------------------
   useEffect(() => {
-    const handler = (e: Event) => {
-      const m = (e as CustomEvent<{ mode: StoryMode }>).detail?.mode;
-      if (m) setMode(m);
-    };
-    window.addEventListener("rios:mode", handler as EventListener);
-    return () => window.removeEventListener("rios:mode", handler as EventListener);
-  }, []);
-
-  // Watch scroll position to sync chapter
-  useEffect(() => {
-    const handler = (e: Event) => {
-      const detail = (e as CustomEvent<{ slug: string }>).detail;
-      if (detail?.slug) setActiveChapter(detail.slug);
-    };
-    window.addEventListener("rios:chapter", handler as EventListener);
-    return () => window.removeEventListener("rios:chapter", handler as EventListener);
-  }, []);
+    if (!ready || mode !== "explore") return;
+    applyExploreLayers(mapRef.current!, layers);
+  }, [layers, ready, mode]);
 
   return (
-    <div className="relative h-full w-full">
+    // In the story the map is decoration: not focusable, not clickable, hidden from AT.
+    <div className={`fixed inset-0 ${mode === "explore" ? "" : "pointer-events-none"}`} inert={mode !== "explore"}>
       <div ref={containerRef} className="absolute inset-0" />
-      {layers.historical && ready && (
-        <HistoricalSwipe mapRef={mapRef} enabled={layers.historical} />
+      {mode === "explore" && (
+        <>
+          {layers.historical && ready && <HistoricalSwipe mapRef={mapRef} enabled />}
+          <Legend />
+          <LayerToggles state={layers} onChange={setLayers} />
+        </>
       )}
-      <Legend />
-      <LayerToggles state={layers} onChange={setLayers} />
-      {hover && (
+      {hover && mode === "explore" && (
         <div
-          className="pointer-events-none absolute z-40 max-w-xs rounded-lg border border-black/10 bg-paper/95 px-3 py-2 shadow-xl backdrop-blur"
-          style={{ left: hover.x + 14, top: hover.y + 14 }}
+          className="panel pointer-events-none absolute z-40 max-w-xs px-3 py-2"
+          style={{ left: Math.min(hover.x + 14, window.innerWidth - 240), top: hover.y + 14 }}
         >
-          <div className="font-serif text-base leading-tight">{hover.name}</div>
-          <div className="mt-0.5 text-xs text-ink/70">{hover.status}</div>
-          {hover.nearStreet && (
-            <div className="mt-1 text-xs italic text-ink/60">sob {hover.nearStreet}</div>
+          <div className="display text-base">{hover.name}</div>
+          <div
+            className={`mt-1 font-mono text-[11px] uppercase tracking-wider ${hover.t === "b" ? "text-sodio-claro" : "text-neblina"}`}
+          >
+            {hover.status}
+          </div>
+          {hover.via && (
+            <div className="mt-1 text-sm italic text-neblina">
+              {hover.t === "b" ? "sob a " : "perto da "}
+              {hover.via}
+            </div>
           )}
         </div>
       )}
@@ -202,9 +210,84 @@ export default function MapView() {
   );
 }
 
+// ---------------------------------------------------------------------------------
+
+function setInteractive(map: MLMap, on: boolean) {
+  [
+    map.scrollZoom,
+    map.dragPan,
+    map.dragRotate,
+    map.boxZoom,
+    map.doubleClickZoom,
+    map.keyboard,
+    map.touchZoomRotate,
+    map.touchPitch,
+  ].forEach((h) => (on ? h.enable() : h.disable()));
+}
+
+function padding() {
+  if (isMobile()) return { top: 64, bottom: Math.round(window.innerHeight * 0.45), left: 0, right: 0 };
+  return { top: 40, bottom: 40, left: 480, right: 80 };
+}
+
+export function moveCamera(
+  map: MLMap,
+  cam: Camera,
+  cityBounds: [number, number, number, number] | null,
+  fast: boolean,
+) {
+  const reduce = prefersReducedMotion();
+  const mobile = isMobile();
+  const pad = padding();
+  let target: maplibregl.FlyToOptions;
+  if ("fit" in cam) {
+    if (!cityBounds) return;
+    const opts = map.cameraForBounds(cityBounds, { padding: pad, bearing: cam.bearing ?? 0 });
+    if (!opts) return;
+    target = { ...opts, pitch: cam.pitch ?? 0, padding: { top: 0, bottom: 0, left: 0, right: 0 } };
+  } else {
+    target = {
+      center: cam.center,
+      zoom: cam.zoom + (mobile ? -0.6 : 0),
+      pitch: reduce ? Math.min(cam.pitch, 30) : cam.pitch,
+      bearing: cam.bearing,
+      padding: pad,
+    };
+  }
+  if (reduce) map.jumpTo(target as maplibregl.JumpToOptions);
+  else if (fast) map.stop().easeTo({ ...target, duration: 800 });
+  else map.flyTo({ ...target, duration: mobile ? 1800 : 2400, curve: 1.3, essential: true });
+}
+
+function applyStepLayers(map: MLMap, step: StoryStep) {
+  const l = step.layers ?? {};
+  applyBase(map, "agua");
+  setLayerVisible(map, "hillshade", true);
+  setLayerVisible(map, "flood-100", !!l.flood);
+  setLayerVisible(map, "streets", !!l.streets);
+  setLayerVisible(map, "basins", false);
+  setLayerVisible(map, "sara1930", false);
+  setLayerVisible(map, "perto-prumo", false);
+  setLayerVisible(map, "perto-ponto", false);
+  map.setPaintProperty("mask", "fill-opacity", 0.92);
+  setTerrain(map, !!l.terrain && !prefersReducedMotion());
+}
+
+function applyExploreLayers(map: MLMap, layers: LayerState) {
+  applyBase(map, layers.base as BaseMapId);
+  setLayerVisible(map, "hillshade", layers.hillshade);
+  setLayerVisible(map, "flood-100", layers.flood100);
+  setLayerVisible(map, "basins", layers.basins);
+  setLayerVisible(map, "sara1930", layers.historical);
+  setLayerVisible(map, "perto-prumo", true);
+  setLayerVisible(map, "perto-ponto", true);
+  map.setPaintProperty("mask", "fill-opacity", 0.85);
+  setTerrain(map, layers.terrain3D);
+}
+
 // The ~30 m Terrarium DEM looks spiky when exaggerated at street-level zooms,
-// but São Paulo's relief is too subtle to read at city zoom without some
-// boost. MapLibre's terrain.exaggeration can't be a zoom expression, so it is
+// but São Paulo's relief is too subtle to read at city zoom without some boost.
+// MapLibre's terrain.exaggeration can't be a zoom expression, so it is
 // recomputed on zoomend: 1.3 at z≤11 → 1.0 at z13 → 0.8 at z≥15.
 const EXAGGERATION_STOPS: Array<[number, number]> = [
   [11, 1.3],
@@ -228,33 +311,20 @@ function terrainExaggeration(zoom: number): number {
 function updateTerrainExaggeration(map: MLMap) {
   const terrain = map.getTerrain();
   if (!terrain) return;
-  const next = Math.round(terrainExaggeration(map.getZoom()) * 20) / 20; // 0.05 steps
+  const next = Math.round(terrainExaggeration(map.getZoom()) * 20) / 20;
   if (Math.abs((terrain.exaggeration ?? 1) - next) < 0.01) return;
   map.setTerrain({ ...terrain, exaggeration: next });
 }
 
-function applyToggleVisibility(map: MLMap, layers: LayerState) {
-  const setVis = (id: string, v: boolean) => {
-    if (!map.getLayer(id)) return;
-    map.setLayoutProperty(id, "visibility", v ? "visible" : "none");
-  };
-  setVis("hillshade", layers.hillshade);
-  setVis("flood-100", layers.flood100);
-  setVis("basins-outline", layers.basins);
-  setVis("sara1930", layers.historical);
-
-  if (layers.terrain3D) {
-    try {
+export function setTerrain(map: MLMap, on: boolean) {
+  try {
+    if (on) {
       if (map.getTerrain()) updateTerrainExaggeration(map);
       else map.setTerrain({ source: "terrarium", exaggeration: terrainExaggeration(map.getZoom()) });
-    } catch {
-      // ignore
-    }
-  } else {
-    try {
+    } else if (map.getTerrain()) {
       map.setTerrain(null);
-    } catch {
-      // ignore
     }
+  } catch {
+    // terrain source not ready yet
   }
 }

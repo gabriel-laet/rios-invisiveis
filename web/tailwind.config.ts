@@ -1,22 +1,34 @@
 import type { Config } from "tailwindcss";
+import { P } from "./lib/palette";
 
 const config: Config = {
   content: ["./app/**/*.{ts,tsx}", "./components/**/*.{ts,tsx}"],
   theme: {
     extend: {
       colors: {
-        paper: "#f4ede0",
-        ink: "#1a1a1a",
-        river: {
-          natural: "#2d8fbb",
-          open: "#8bb8d0",
-          buried: "#c7506b",
-          lake: "#3a9dc7",
-        },
+        asfalto: P.asfalto,
+        chao: P.chao,
+        painel: P.painel,
+        breu: P.breu,
+        garoa: P.garoa,
+        neblina: P.neblina,
+        muro: P.muro,
+        memoria: P.memoria,
+        rio: P.rio,
+        canal: P.canal,
+        lago: P.lago,
+        sodio: { DEFAULT: P.sodio, claro: P.sodioClaro },
+        enchente: P.enchente,
+        alerta: P.alerta,
       },
       fontFamily: {
-        serif: ["Georgia", "ui-serif", "serif"],
-        sans: ["system-ui", "-apple-system", "sans-serif"],
+        display: ["var(--font-archivo)", "system-ui", "sans-serif"],
+        serif: ["var(--font-newsreader)", "Georgia", "serif"],
+        mono: ["var(--font-plex-mono)", "ui-monospace", "monospace"],
+        sans: ["var(--font-newsreader)", "Georgia", "serif"],
+      },
+      borderRadius: {
+        DEFAULT: "2px",
       },
     },
   },

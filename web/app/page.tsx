@@ -1,13 +1,16 @@
 import MapShell from "@/components/MapShell";
-import Scrollytelling from "@/components/Scrollytelling";
+import StoryScroller, { SkipLink } from "@/components/StoryScroller";
+import TimeDevice from "@/components/Hidrometro";
+import ExploreBar from "@/components/ExploreBar";
 
 export default function Page() {
   return (
-    <main className="relative h-screen w-screen overflow-hidden">
-      <div className="absolute inset-0">
-        <MapShell />
-      </div>
-      <Scrollytelling />
+    <main className="relative">
+      <SkipLink />
+      <MapShell />
+      <TimeDevice />
+      <StoryScroller />
+      <ExploreBar />
     </main>
   );
 }
